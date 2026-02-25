@@ -1,3 +1,10 @@
+### ToDo List
+1. Add option for Tree-style or Markdown-style
+2. Add seperated file for login info
+3. Add option for Network centric output or Application centric output
+   - Network centric refers to current output
+   - Application centric means BD option and EPG to EPG contract relationship
+
 ### How to Use
 ```
 aci-treeviwer % uv run aci-v2.py --help
