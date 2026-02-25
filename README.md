@@ -1,6 +1,6 @@
 ### How to Use
 ```
-uv run aci-v2.py --help
+aci-treeviwer % uv run aci-v2.py --help
 usage: aci-v2.py [-h] [--tenant TENANT]
 
 ACI Audit Visualizer
@@ -10,8 +10,8 @@ options:
   --tenant TENANT       Filter by Tenant name
 ```
 ### Output example
-uv run aci-v2.py
 ```
+aci-treeviwer % uv run aci-v2.py
 [*] Connected to https://192.168.200.131
 ACI Audit Topology Report (with Service Graph & pcTag)
 ├── Tenant: mgmt
