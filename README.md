@@ -1,7 +1,7 @@
 ### ToDo List
-1. Add option for Tree-style or Markdown-style
-2. Add seperated file for login info
-3. Add option for Network centric output or Application centric output
+1. Need to add option for Tree-style or Markdown-style
+2. Need to add seperated file for login info
+3. Need to make option for Network centric output or Application centric output
    - Network centric refers to current output
    - Application centric means BD option and EPG to EPG contract relationship
 
