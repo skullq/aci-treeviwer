@@ -1,11 +1,11 @@
-### ToDo List
+## TODO List
 1. Need to add option for Tree-style or Markdown-style
 2. Need to add seperated file for login info
 3. Need to make option for Network centric output or Application centric output
    - Network centric refers to current output
    - Application centric means BD option and EPG to EPG contract relationship
 
-### How to Use
+## How to Use
 ```
 aci-treeviwer % uv run aci-v2.py --help
 usage: aci-v2.py [-h] [--tenant TENANT]
@@ -16,7 +16,7 @@ options:
   -h, --help            show this help message and exit
   --tenant TENANT       Filter by Tenant name
 ```
-### Output example
+## Output example
 ```
 aci-treeviwer % uv run aci-v2.py
 [*] Connected to https://192.168.200.131
