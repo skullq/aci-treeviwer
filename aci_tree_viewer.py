@@ -3,19 +3,22 @@ import json
 import urllib3
 import re
 import argparse
+import configparser
 from collections import defaultdict
+from datetime import datetime
 from rich.console import Console
 from rich.tree import Tree
 from rich.text import Text
 from textual.app import App, ComposeResult
-from textual.widgets import Header, Footer, Tree as TextualTree
+from textual.widgets import Header, Footer, Tree as TextualTree, Static
+from textual.containers import Container
 from textual.events import Key
 
 
 # SSL 인증서 경고 무시
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-class ACIFullAuditVisualizer:
+class AciTreeViewer:
     def __init__(self, url, user, password):
         self.url = url
         self.session = requests.Session()
@@ -55,6 +58,20 @@ class ACIFullAuditVisualizer:
         }
         return ", ".join([scope_map.get(s.strip(), s.strip()) for s in scope.split(',') if s.strip()])
 
+    def _format_health_status(self, dn, health_map, fault_map):
+        """Formats health score and fault count into a rich text string."""
+        parts = []
+        health = health_map.get(dn)
+        faults = fault_map.get(dn, 0)
+
+        if health is not None:
+            health = int(health)
+            color = "green" if health >= 90 else "yellow" if health >= 70 else "red"
+            parts.append(f"[{color}]HS: {health}[/{color}]")
+        if faults > 0:
+            parts.append(f"[bold red]❗{faults}[/bold red]")
+        return f" ({', '.join(parts)})" if parts else ""
+
     def _fetch_all_data(self):
         """모든 ACI 객체 데이터 수집"""
         classes = [
@@ -62,8 +79,8 @@ class ACIFullAuditVisualizer:
             'l3extOut', 'l3extInstP', 'l3extSubnet',
             'fvRsProv', 'fvRsCons', 'l3extRsProv', 'l3extRsCons',
             'vnsRsAbsGraphAtt', 'fvRsCtx', 'fvRsBd', 'l3extRsEctx',
-            'vzAny', 'vzRsAnyToProv', 'vzRsAnyToCons', 'vzSubj',
-            'ipRouteP', 'ipNexthopP'
+            'vzAny', 'vzRsAnyToProv', 'vzRsAnyToCons', 'vzSubj', 'ipRouteP',
+            'ipNexthopP', 'healthInst', 'faultInst'
         ]
         return {cls: self.get_data(cls) for cls in classes}
 
@@ -162,6 +179,40 @@ class ACIFullAuditVisualizer:
             if p_dn in route_dn_map:
                 route_dn_map[p_dn]['nexthops'].append(attr.get('nhAddr', ''))
 
+        # 8. Health and Fault Mapping
+        health_map = {h['healthInst']['attributes']['dn']: h['healthInst']['attributes']['cur'] for h in data.get('healthInst', [])}
+        fault_map = defaultdict(int)
+        for f in data.get('faultInst', []):
+            parent_dn = f['faultInst']['attributes']['dn'].rsplit('/fault-', 1)[0]
+            fault_map[parent_dn] += 1
+        
+        # 9. DN to Full Object and App-Centric Mapping
+        dn_to_full_obj = {}
+        for class_name, objects in data.items():
+            if class_name in ['imdata', 'healthInst', 'faultInst']: continue
+            for obj_wrapper in objects:
+                if class_name in obj_wrapper:
+                    attrs = obj_wrapper[class_name].get('attributes', {})
+                    if 'dn' in attrs:
+                        dn_to_full_obj[attrs['dn']] = attrs
+        
+        app_centric_map = defaultdict(lambda: {'prov': set(), 'cons': set()})
+        dn_to_name = {t['fvTenant']['attributes']['dn']: t['fvTenant']['attributes']['name'] for t in data['fvTenant']}
+        for epg in data.get('fvAEPg', []):
+            dn_to_name[epg['fvAEPg']['attributes']['dn']] = epg['fvAEPg']['attributes']['name']
+        for epg in data.get('l3extInstP', []):
+            dn_to_name[epg['l3extInstP']['attributes']['dn']] = epg['l3extInstP']['attributes']['name']
+        for dn, conts in total_conts.items():
+            if not ('/epg-' in dn or '/instP-' in dn): continue
+            tenant_match = re.match(r'uni/tn-([^/]+)', dn)
+            if not tenant_match: continue
+            tenant_name = tenant_match.group(1)
+            epg_name = dn_to_name.get(dn, dn.split('/')[-1])
+            for contract_name in conts['prov']:
+                app_centric_map[(tenant_name, contract_name)]['prov'].add((epg_name, dn))
+            for contract_name in conts['cons']:
+                app_centric_map[(tenant_name, contract_name)]['cons'].add((epg_name, dn))
+
         return {
             'bd_to_vrf': bd_to_vrf,
             'l3_to_vrf': l3_to_vrf,
@@ -170,13 +221,14 @@ class ACIFullAuditVisualizer:
             'vrf_public_subnets': vrf_public_subnets,
             'l3out_ext_info': l3out_ext_info,
             'contract_info': contract_info,
-            'instp_subnets': instp_subnets,
-            'l3out_static_routes': l3out_static_routes
+            'instp_subnets': instp_subnets, 'l3out_static_routes': l3out_static_routes,
+            'health_map': health_map, 'fault_map': fault_map, 'app_centric_map': app_centric_map,
+            'dn_to_full_obj': dn_to_full_obj
         }
 
     def visualize_tree(self, tenant_filter=None, display_mode='tree'):
         if display_mode == 'tui':
-            app = AciTuiApp(self, tenant_filter)
+            app = AciTreeViewerApp(self, tenant_filter)
             app.run()
             return
 
@@ -191,13 +243,13 @@ class ACIFullAuditVisualizer:
             return f"{name} ({direction})"
 
         # Tree View Logic
-        root = Tree("[bold blue]ACI Audit Topology Report[/bold blue] (with Service Graph & pcTag)")
+        root = Tree("[bold blue]ACI Tree Viewer[/bold blue]")
 
         for t in data['fvTenant']:
             t_name, t_dn = t['fvTenant']['attributes']['name'], t['fvTenant']['attributes']['dn']
             if tenant_filter and t_name != tenant_filter:
                 continue
-            t_node = root.add(f"[bold]Tenant:[/bold] {t_name}")
+            t_node = root.add(f"[bold]Tenant:[/bold] {t_name}{self._format_health_status(t_dn, maps['health_map'], maps['fault_map'])}")
             
             # Tenant별 VRF 필터링
             tenant_vrfs = [v for v in data['fvCtx'] if v['fvCtx']['attributes']['dn'].startswith(t_dn)]
@@ -205,7 +257,7 @@ class ACIFullAuditVisualizer:
                 v_attr = v['fvCtx']['attributes'] 
                 v_dn = v_attr['dn']
                 v_name = v_attr['name']
-                v_node = t_node.add(f"[bold]VRF:[/bold] {v_name} [dim](VNID: {v_attr.get('scope', 'N/A')}, pcTag: {self._format_tag(v_attr.get('pcTag', 'N/A'))})[/dim]")
+                v_node = t_node.add(f"[bold]VRF:[/bold] {v_name} [dim](VNID: {v_attr.get('scope', 'N/A')}, pcTag: {self._format_tag(v_attr.get('pcTag', 'N/A'))})[/dim]{self._format_health_status(v_dn, maps['health_map'], maps['fault_map'])}")
 
                 # vzAny (VRF Level Contracts)
                 vzany_dn = f"{v_dn}/any"
@@ -223,7 +275,7 @@ class ACIFullAuditVisualizer:
                 for b in t_bds:
                     bd_attr = b['fvBD']['attributes']
                     bd_name = bd_attr['name']
-                    bd_node = internal_node.add(f"[bold]BD:[/bold] {bd_name} [dim](pcTag: {self._format_tag(bd_attr.get('pcTag', 'N/A'))})[/dim]")
+                    bd_node = internal_node.add(f"[bold]BD:[/bold] {bd_name} [dim](pcTag: {self._format_tag(bd_attr.get('pcTag', 'N/A'))})[/dim]{self._format_health_status(bd_attr['dn'], maps['health_map'], maps['fault_map'])}")
                     
                     # EPG 매핑
                     for rs in data['fvRsBd']:
@@ -234,7 +286,7 @@ class ACIFullAuditVisualizer:
                             epg_obj = next((e for e in data['fvAEPg'] if e['fvAEPg']['attributes']['dn'] == epg_dn), None)
                             pctag = self._format_tag(epg_obj['fvAEPg']['attributes'].get('pcTag', 'N/A')) if epg_obj else 'N/A'
                             
-                            epg_node = bd_node.add(f"[bold]EPG:[/bold] {epg_name} [dim](pcTag: {pctag})[/dim]")
+                            epg_node = bd_node.add(f"[bold]EPG:[/bold] {epg_name} [dim](pcTag: {pctag})[/dim]{self._format_health_status(epg_dn, maps['health_map'], maps['fault_map'])}")
                             conts = maps['total_conts'].get(epg_dn, {"prov": [], "cons": []})
                             for p in conts['prov']:
                                 g = f" [bold red][Graph: {maps['cont_to_graph'][p]}][/bold red]" if p in maps['cont_to_graph'] else ""
@@ -251,7 +303,7 @@ class ACIFullAuditVisualizer:
                     all_ads = list(set(maps['vrf_public_subnets'].get(v_name, []))) + maps['l3out_ext_info'].get(l_dn, [])
                     subnets_str = ", ".join(all_ads) if all_ads else "Private Only"
                     
-                    l3_node = external_node.add(f"[bold]L3Out:[/bold] {l['l3extOut']['attributes']['name']}")
+                    l3_node = external_node.add(f"[bold]L3Out:[/bold] {l['l3extOut']['attributes']['name']}{self._format_health_status(l_dn, maps['health_map'], maps['fault_map'])}")
                     l3_node.add(f"Advertised: [green]{subnets_str}[/green]")
                     
                     # Static Routes
@@ -271,7 +323,7 @@ class ACIFullAuditVisualizer:
                         i_attr = instp['l3extInstP']['attributes']
                         if i_attr['dn'].startswith(l_dn):
                             i_dn = i_attr['dn']
-                            ext_epg_node = l3_node.add(f"[bold]External EPG:[/bold] {i_attr['name']} [dim](pcTag: {self._format_tag(i_attr.get('pcTag', 'N/A'))})[/dim]")
+                            ext_epg_node = l3_node.add(f"[bold]External EPG:[/bold] {i_attr['name']} [dim](pcTag: {self._format_tag(i_attr.get('pcTag', 'N/A'))})[/dim]{self._format_health_status(i_dn, maps['health_map'], maps['fault_map'])}")
                             
                             # Subnets under External EPG
                             for sub in maps['instp_subnets'].get(i_dn, []):
@@ -288,38 +340,65 @@ class ACIFullAuditVisualizer:
         
         console.print(root)
 
-class AciTuiApp(App):
-    """A Textual app to view ACI Topology."""
+class AciTreeViewerApp(App):
+    """A Textual app to view ACI topology."""
 
-    TITLE = "ACI Audit Visualizer"
+    BINDINGS = [
+        ("r", "refresh", "Refresh"),
+        ("v", "toggle_view", "Toggle View"),
+    ]
+
+    TITLE = "ACI Tree Viewer"
     CSS = """
     Screen {
-        background: $surface;
-        color: $text;
+        layout: vertical;
+    }
+    #main-container {
+        layout: horizontal;
+        height: 1fr;
     }
     Tree {
         background: $panel;
-        width: 100%;
-        height: 100%;
+        width: 60%;
         border: round white;
+    }
+    #details-pane {
+        padding: 0 1;
     }
     """
 
-    def __init__(self, visualizer, tenant_filter):
+    def __init__(self, viewer, tenant_filter):
         super().__init__()
-        self.visualizer = visualizer
+        self.viewer = viewer
         self.tenant_filter = tenant_filter
+        self.current_view = 'network'
+        self.data = {}
+        self.maps = {}
 
     def compose(self) -> ComposeResult:
         yield Header()
+        with Container(id="main-container"):
+            yield TextualTree("ACI Topology", id="tree")
+            yield Static("Select an object to see details.", id="details-pane")
         yield Footer()
-        yield TextualTree("ACI Topology", id="tree")
 
     def on_mount(self) -> None:
-        """Called when app starts, builds the tree, and sets up a refresh timer."""
+        """Called when app starts, builds the tree."""
         self.build_tree()
 
     def build_tree(self) -> None:
+        """Fetches data and dispatches to the correct tree builder."""
+        self.sub_title = f"View: {self.current_view.capitalize()} | Last updated: {datetime.now().strftime('%H:%M:%S')}"
+        
+        self.data = self.viewer._fetch_all_data()
+        self.maps = self.viewer._process_mappings(self.data)
+
+        if self.current_view == 'network':
+            self._build_network_tree()
+        else:
+            self._build_app_tree()
+
+    def _build_network_tree(self) -> None:
         """Fetches data and builds/refreshes the tree view, preserving state."""
         tree = self.query_one("#tree", TextualTree)
 
@@ -338,14 +417,10 @@ class AciTuiApp(App):
         parent_data = cursor_node.parent.data if cursor_node and cursor_node.parent else None
 
         tree.clear()
-        tree.root.set_label("[bold blue]ACI Audit Topology Report[/bold blue]")
+        tree.root.set_label("[bold blue]ACI Tree Viewer - Network View[/bold blue]")
         
-        data = self.visualizer._fetch_all_data()
-        maps = self.visualizer._process_mappings(data)
-
-        _format_tag = self.visualizer._format_tag
-        _format_scope = self.visualizer._format_scope
-
+        data = self.data
+        maps = self.maps
         def get_cont_label(name, tenant_name):
             direction = maps['contract_info'].get((tenant_name, name))
             if not direction: direction = maps['contract_info'].get(('common', name), 'Bi')
@@ -357,7 +432,8 @@ class AciTuiApp(App):
             t_name, t_dn = t['fvTenant']['attributes']['name'], t['fvTenant']['attributes']['dn']
             if self.tenant_filter and t_name != self.tenant_filter:
                 continue
-            t_node = tree.root.add(f"[bold]Tenant:[/bold] {t_name}", data=t_dn, expand=True)
+            health_status = self.viewer._format_health_status(t_dn, maps['health_map'], maps['fault_map'])
+            t_node = tree.root.add(f"[bold]Tenant:[/bold] {t_name}{health_status}", data=t_dn, expand=True)
             data_to_node_map[t_dn] = t_node
             
             tenant_vrfs = [v for v in data['fvCtx'] if v['fvCtx']['attributes']['dn'].startswith(t_dn)]
@@ -368,8 +444,9 @@ class AciTuiApp(App):
                 v_attr = v['fvCtx']['attributes'] 
                 v_dn = v_attr['dn']
                 v_name = v_attr['name']
+                health_status = self.viewer._format_health_status(v_dn, maps['health_map'], maps['fault_map'])
                 v_node = t_node.add(
-                    f"[bold]VRF:[/bold] {v_name} [dim](VNID: {v_attr.get('scope', 'N/A')}, pcTag: {_format_tag(v_attr.get('pcTag', 'N/A'))})[/dim]",
+                    f"[bold]VRF:[/bold] {v_name} [dim](VNID: {v_attr.get('scope', 'N/A')}, pcTag: {self.viewer._format_tag(v_attr.get('pcTag', 'N/A'))})[/dim]{health_status}",
                     data=v_dn,
                     expand=v_dn in expanded_nodes
                 )
@@ -406,8 +483,9 @@ class AciTuiApp(App):
                     bd_attr = b['fvBD']['attributes']
                     bd_name = bd_attr['name']
                     bd_dn = bd_attr['dn']
+                    health_status = self.viewer._format_health_status(bd_dn, maps['health_map'], maps['fault_map'])
                     bd_node = internal_node.add(
-                        f"[bold]BD:[/bold] {bd_name} [dim](pcTag: {_format_tag(bd_attr.get('pcTag', 'N/A'))})[/dim]",
+                        f"[bold]BD:[/bold] {bd_name} [dim](pcTag: {self.viewer._format_tag(bd_attr.get('pcTag', 'N/A'))})[/dim]{health_status}",
                         data=bd_dn,
                         expand=bd_dn in expanded_nodes
                     )
@@ -421,10 +499,11 @@ class AciTuiApp(App):
                             epg_dn = rs_attr['dn'].replace('/rsbd', '')
                             epg_name = epg_dn.split('epg-')[-1]
                             epg_obj = next((e for e in data['fvAEPg'] if e['fvAEPg']['attributes']['dn'] == epg_dn), None)
-                            pctag = _format_tag(epg_obj['fvAEPg']['attributes'].get('pcTag', 'N/A')) if epg_obj else 'N/A'
+                            pctag = self.viewer._format_tag(epg_obj['fvAEPg']['attributes'].get('pcTag', 'N/A')) if epg_obj else 'N/A'
                             
+                            health_status = self.viewer._format_health_status(epg_dn, maps['health_map'], maps['fault_map'])
                             epg_node = bd_node.add(
-                                f"[bold]EPG:[/bold] {epg_name} [dim](pcTag: {pctag})[/dim]",
+                                f"[bold]EPG:[/bold] {epg_name} [dim](pcTag: {pctag})[/dim]{health_status}",
                                 data=epg_dn,
                                 expand=epg_dn in expanded_nodes
                             )
@@ -454,9 +533,9 @@ class AciTuiApp(App):
                     l_dn = l['l3extOut']['attributes']['dn']
                     all_ads = list(set(maps['vrf_public_subnets'].get(v_name, []))) + maps['l3out_ext_info'].get(l_dn, [])
                     subnets_str = ", ".join(all_ads) if all_ads else "Private Only"
-                    
+                    health_status = self.viewer._format_health_status(l_dn, maps['health_map'], maps['fault_map'])
                     l3_node = external_node.add(
-                        f"[bold]L3Out:[/bold] {l['l3extOut']['attributes']['name']}",
+                        f"[bold]L3Out:[/bold] {l['l3extOut']['attributes']['name']}{health_status}",
                         data=l_dn,
                         expand=l_dn in expanded_nodes
                     )
@@ -486,16 +565,17 @@ class AciTuiApp(App):
                         if i_attr['dn'].startswith(l_dn):
                             ext_epg_found = True
                             i_dn = i_attr['dn']
+                            health_status = self.viewer._format_health_status(i_dn, maps['health_map'], maps['fault_map'])
                             ext_epg_node = l3_node.add(
-                                f"[bold]External EPG:[/bold] {i_attr['name']} [dim](pcTag: {_format_tag(i_attr.get('pcTag', 'N/A'))})[/dim]",
+                                f"[bold]External EPG:[/bold] {i_attr['name']} [dim](pcTag: {self.viewer._format_tag(i_attr.get('pcTag', 'N/A'))})[/dim]{health_status}",
                                 data=i_dn,
                                 expand=i_dn in expanded_nodes
                             )
                             data_to_node_map[i_dn] = ext_epg_node
                             
                             for sub in maps['instp_subnets'].get(i_dn, []):
-                                scope_str = _format_scope(sub.get('scope', ''))
-                                ext_epg_node.add_leaf(f"Subnet: [bold yellow]{sub['ip']}[/bold yellow] [dim](pcTag: {_format_tag(sub.get('pcTag', 'N/A'))}, Scope: {scope_str})[/dim]")
+                                scope_str = self.viewer._format_scope(sub.get('scope', ''))
+                                ext_epg_node.add_leaf(f"Subnet: [bold yellow]{sub['ip']}[/bold yellow] [dim](pcTag: {self.viewer._format_tag(sub.get('pcTag', 'N/A'))}, Scope: {scope_str})[/dim]")
 
                             i_conts = maps['total_conts'].get(i_dn, {"prov": [], "cons": []})
                             for p in i_conts['prov']:
@@ -515,47 +595,111 @@ class AciTuiApp(App):
 
         tree.focus()
 
+    def _build_app_tree(self) -> None:
+        """Builds the application-centric tree view."""
+        tree = self.query_one("#tree", TextualTree)
+        tree.clear()
+        tree.root.set_label("[bold blue]ACI Tree Viewer - App View[/bold blue]")
+
+        maps = self.maps
+        app_map = maps['app_centric_map']
+        health_map = maps['health_map']
+        fault_map = maps['fault_map']
+
+        tenant_map = defaultdict(list)
+        for (tenant, contract), epgs in app_map.items():
+            tenant_map[tenant].append((contract, epgs))
+
+        tenants_to_display = sorted(tenant_map.keys())
+        if self.tenant_filter:
+            tenants_to_display = [t for t in tenants_to_display if t == self.tenant_filter]
+
+        for tenant in tenants_to_display:
+            t_dn = f"uni/tn-{tenant}"
+            health_status = self.viewer._format_health_status(t_dn, health_map, fault_map)
+            t_node = tree.root.add(f"[bold]Tenant:[/bold] {tenant}{health_status}")
+            contracts = sorted(tenant_map[tenant], key=lambda x: x[0])
+            if not contracts: t_node.add_leaf("No contract relationships found.")
+
+            for contract, epgs in contracts:
+                direction = maps['contract_info'].get((tenant, contract), 'Bi')
+                contract_dn = f"uni/tn-{tenant}/brc-{contract}"
+                c_node = t_node.add(f"Contract: [cyan]{contract}[/cyan] ({direction})", data=contract_dn)
+                
+                prov_node_dn = f"{contract_dn}/providers"
+                prov_node = c_node.add(f"[green]Providers[/green] ({len(epgs['prov'])})", data=prov_node_dn)
+                if epgs['prov']:
+                    for epg_name, epg_dn in sorted(list(epgs['prov'])):
+                        health_status = self.viewer._format_health_status(epg_dn, health_map, fault_map)
+                        prov_node.add_leaf(f"EPG: {epg_name}{health_status}", data=epg_dn)
+                else: prov_node.add_leaf("[dim]None[/dim]")
+
+                cons_node_dn = f"{contract_dn}/consumers"
+                cons_node = c_node.add(f"[yellow]Consumers[/yellow] ({len(epgs['cons'])})", data=cons_node_dn)
+                if epgs['cons']:
+                    for epg_name, epg_dn in sorted(list(epgs['cons'])):
+                        health_status = self.viewer._format_health_status(epg_dn, health_map, fault_map)
+                        cons_node.add_leaf(f"EPG: {epg_name}{health_status}", data=epg_dn)
+                else: cons_node.add_leaf("[dim]None[/dim]")
+        tree.focus()
+        
+    def action_refresh(self) -> None:
+        """Refresh the tree view data."""
+        self.build_tree()
+
+    def action_toggle_view(self) -> None:
+        """Toggle between network and application-centric views."""
+        self.current_view = 'application' if self.current_view == 'network' else 'network'
+        self.build_tree()
+        
     def on_key(self, event: Key) -> None:
         """Handle key presses for the TUI."""
-        tree = self.query_one("#tree", TextualTree)
+        if event.key == "enter":
+            tree = self.query_one("#tree", TextualTree)
+            if not tree.cursor_node:
+                return
 
-        if event.key == "r":
-            self.build_tree()
+            details_pane = self.query_one("#details-pane", Static)
+            node_data = tree.cursor_node.data
+
+            if not node_data:
+                details_pane.update("Select an object to see details.")
+                return
+
+            dn_to_full_obj = self.maps.get('dn_to_full_obj', {})
+            obj_details = dn_to_full_obj.get(node_data)
+
+            if obj_details:
+                api_request_info = f"[bold green]GET[/bold green] /api/mo/{node_data}.json"
+                formatted_details = [api_request_info, ""]
+                for key, value in sorted(obj_details.items()):
+                    formatted_details.append(f"[bold cyan]{key}:[/bold cyan] {value}")
+                details_pane.update("\n".join(formatted_details))
+            else:
+                details_pane.update(f"No detailed attributes for this item.\n\nDN: {node_data}")
             event.prevent_default()
-            return
-
-        if tree.cursor_node:
-            node = tree.cursor_node
-            if event.key == "right":
-                if not node.is_expanded:
-                    # If collapsed, expand it.
-                    node.expand()
-                elif node.children:
-                    # If already expanded, move to the first child.
-                    tree.select_node(node.children[0])
-                event.prevent_default()
-            elif event.key == "left":
-                if node.is_expanded:
-                    # If expanded, collapse it.
-                    node.collapse()
-                elif node.parent:
-                    # If collapsed, move to the parent.
-                    tree.select_node(node.parent)
-                event.prevent_default()
-            elif event.key == "enter":
-                # Toggle expand-all/collapse
-                if tree.cursor_node.is_expanded:
-                    tree.cursor_node.collapse()
-                else:
-                    tree.cursor_node.expand_all()
-                event.prevent_default() # Prevent default 'select' action
-
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="ACI Audit Visualizer")
+    parser = argparse.ArgumentParser(description="ACI Tree Viewer")
     parser.add_argument("--tenant", help="Filter by Tenant name", default=None)
     parser.add_argument("--display", choices=['tree', 'tui'], default='tree', help="Output format: tree (default) or tui (interactive)")
     args = parser.parse_args()
 
-    visualizer = ACIFullAuditVisualizer("https://192.168.200.131", "admin", "p@ssw0rd")
-    visualizer.visualize_tree(tenant_filter=args.tenant, display_mode=args.display)
+    # Read configuration from config.ini
+    config = configparser.ConfigParser()
+    config_file = 'config.ini'
+    if not config.read(config_file):
+        print(f"[!] Error: Configuration file '{config_file}' not found or is empty.")
+        print("[!] Please create it with an [ACI] section containing URL, USER, and PASSWORD.")
+        exit()
+
+    try:
+        aci_url = config.get('ACI', 'URL')
+        aci_user = config.get('ACI', 'USER')
+        aci_password = config.get('ACI', 'PASSWORD')
+    except (configparser.NoSectionError, configparser.NoOptionError) as e:
+        print(f"[!] Error in configuration file: {e}")
+        exit()
+
+    viewer = AciTreeViewer(aci_url, aci_user, aci_password)
+    viewer.visualize_tree(tenant_filter=args.tenant, display_mode=args.display)
