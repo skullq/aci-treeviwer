@@ -1,11 +1,61 @@
-## TODO List
-1. Need to add option for Tree-style or Markdown-style
-2. Need to add seperated file for login info
-3. Need to make option for Network centric output or Application centric output
-   - Network centric refers to current output
-   - Application centric means BD option and EPG to EPG contract relationship
+# ACI Tree Viewer
 
-## How to Use
+A powerful command-line tool to visualize Cisco ACI fabric configurations in a hierarchical tree structure. It provides both static and interactive TUI (Text User Interface) modes for intuitive browsing and analysis of your ACI environment.
+
+## Key Features
+
+*   **Multiple Display Modes**:
+    *   **`tree` (default)**: A static, color-coded tree view of the entire ACI configuration, perfect for quick overviews and generating reports.
+    *   **`tui` (interactive)**: A full-featured, interactive terminal application for in-depth, real-time analysis.
+
+*   **Interactive TUI Mode (`--display tui`)**:
+    *   **Dual-View System**:
+        *   **Network-Centric View**: The traditional hierarchy (`Tenant` -> `VRF` -> `BD` -> `EPG`).
+        *   **Application-Centric View**: A view centered around contracts, showing provider/consumer EPG relationships (`Tenant` -> `Contract` -> `Providers/Consumers`).
+        *   Toggle between views instantly with the `v` key.
+    *   **Real-time Health Monitoring**:
+        *   Displays the **Health Score (HS)** and **Fault Count (❗)** for each object directly in the tree, allowing for immediate identification of issues.
+    *   **Detailed Object Inspector**:
+        *   Select any object in the tree and press `Enter` to view its complete set of attributes in a dedicated details pane.
+    *   **API Request Visibility**:
+        *   The details pane also shows the corresponding REST API `GET` request used to fetch the object's data, aiding in automation and learning.
+    *   **On-demand Refresh**:
+        *   Press the `r` key at any time to fetch the latest data from the APIC and refresh the display.
+
+*   **Secure External Configuration**:
+    *   APIC connection details (URL, username, password) are managed in an external `config.ini` file, keeping sensitive credentials out of the source code.
+
+*   **Tenant Filtering**:
+    *   Use the `--tenant` flag to focus the view on a single tenant, simplifying analysis in large environments.
+
+## Setup
+
+1.  **Install Dependencies**:
+    This project uses `requests`, `rich`, and `textual`. You can install them using `pip` or your preferred package manager.
+    - Using `pip`:
+      ```shell
+      pip install requests rich textual
+      ```
+    - Using `uv` (recommended for speed):
+      ```shell
+      uv pip install requests rich textual
+      ```
+
+2.  **Create Configuration File**:
+    In the same directory as the script, create a file named `config.ini` with your APIC connection details:
+    ```ini
+    [ACI]
+    URL = https://<your-apic-ip>
+    USER = <your-username>
+    PASSWORD = <your-password>
+    ```
+
+## Usage
+
+The script can be run directly with `python` or using a project runner like `uv`. The examples below use `uv`.
+
+### Command-Line Options
+
 ```
 aci-treeviwer % uv run aci-v2.py --help
 usage: aci-v2.py [-h] [--tenant TENANT]
