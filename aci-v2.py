@@ -6,6 +6,11 @@ import argparse
 from collections import defaultdict
 from rich.console import Console
 from rich.tree import Tree
+from rich.text import Text
+from textual.app import App, ComposeResult
+from textual.widgets import Header, Footer, Tree as TextualTree
+from textual.events import Key
+
 
 # SSL 인증서 경고 무시
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -57,7 +62,8 @@ class ACIFullAuditVisualizer:
             'l3extOut', 'l3extInstP', 'l3extSubnet',
             'fvRsProv', 'fvRsCons', 'l3extRsProv', 'l3extRsCons',
             'vnsRsAbsGraphAtt', 'fvRsCtx', 'fvRsBd', 'l3extRsEctx',
-            'vzAny', 'vzRsAnyToProv', 'vzRsAnyToCons', 'vzSubj'
+            'vzAny', 'vzRsAnyToProv', 'vzRsAnyToCons', 'vzSubj',
+            'ipRouteP', 'ipNexthopP'
         ]
         return {cls: self.get_data(cls) for cls in classes}
 
@@ -134,6 +140,28 @@ class ACIFullAuditVisualizer:
             if match:
                 instp_subnets[match.group(1)].append(attr)
 
+        # 7. Static Routes Mapping
+        l3out_static_routes = defaultdict(list)
+        route_dn_map = {}
+        
+        for r in data.get('ipRouteP', []):
+            attr = r['ipRouteP']['attributes']
+            dn = attr['dn']
+            l3_match = re.match(r'(uni/tn-[^/]+/out-[^/]+)', dn)
+            node_match = re.search(r'node-(\d+)', dn)
+            
+            if l3_match:
+                l3_dn = l3_match.group(1)
+                route_obj = {'prefix': attr.get('ip', '0.0.0.0/0'), 'node': node_match.group(1) if node_match else "All", 'nexthops': [], 'dn': dn}
+                l3out_static_routes[l3_dn].append(route_obj)
+                route_dn_map[dn] = route_obj
+
+        for nh in data.get('ipNexthopP', []):
+            attr = nh['ipNexthopP']['attributes']
+            p_dn = attr['dn'].rsplit('/', 1)[0]
+            if p_dn in route_dn_map:
+                route_dn_map[p_dn]['nexthops'].append(attr.get('nhAddr', ''))
+
         return {
             'bd_to_vrf': bd_to_vrf,
             'l3_to_vrf': l3_to_vrf,
@@ -142,21 +170,28 @@ class ACIFullAuditVisualizer:
             'vrf_public_subnets': vrf_public_subnets,
             'l3out_ext_info': l3out_ext_info,
             'contract_info': contract_info,
-            'instp_subnets': instp_subnets
+            'instp_subnets': instp_subnets,
+            'l3out_static_routes': l3out_static_routes
         }
 
-    def visualize_tree(self, tenant_filter=None):
+    def visualize_tree(self, tenant_filter=None, display_mode='tree'):
+        if display_mode == 'tui':
+            app = AciTuiApp(self, tenant_filter)
+            app.run()
+            return
+
         data = self._fetch_all_data()
         maps = self._process_mappings(data)
         console = Console()
-        
-        root = Tree("[bold blue]ACI Audit Topology Report[/bold blue] (with Service Graph & pcTag)")
 
         def get_cont_label(name, tenant_name):
             """Contract 이름에 방향성(Bi/Uni) 추가"""
             direction = maps['contract_info'].get((tenant_name, name))
             if not direction: direction = maps['contract_info'].get(('common', name), 'Bi')
             return f"{name} ({direction})"
+
+        # Tree View Logic
+        root = Tree("[bold blue]ACI Audit Topology Report[/bold blue] (with Service Graph & pcTag)")
 
         for t in data['fvTenant']:
             t_name, t_dn = t['fvTenant']['attributes']['name'], t['fvTenant']['attributes']['dn']
@@ -219,6 +254,18 @@ class ACIFullAuditVisualizer:
                     l3_node = external_node.add(f"[bold]L3Out:[/bold] {l['l3extOut']['attributes']['name']}")
                     l3_node.add(f"Advertised: [green]{subnets_str}[/green]")
                     
+                    # Static Routes
+                    s_routes = maps['l3out_static_routes'].get(l_dn, [])
+                    if s_routes:
+                        sr_node = l3_node.add("[bold]Static Routes[/bold]")
+                        grouped_routes = defaultdict(lambda: {'nodes': set(), 'nexthops': set()})
+                        for sr in s_routes:
+                            grouped_routes[sr['prefix']]['nodes'].add(sr['node'])
+                            grouped_routes[sr['prefix']]['nexthops'].update(sr['nexthops'])
+                        
+                        for prefix, info in grouped_routes.items():
+                            sr_node.add(f"Node {', '.join(sorted(info['nodes']))}: [cyan]{prefix}[/cyan] via [yellow]{', '.join(sorted(info['nexthops']))}[/yellow]")
+
                     # L3Out External EPG 및 Contract 매핑
                     for instp in data['l3extInstP']:
                         i_attr = instp['l3extInstP']['attributes']
@@ -241,10 +288,274 @@ class ACIFullAuditVisualizer:
         
         console.print(root)
 
+class AciTuiApp(App):
+    """A Textual app to view ACI Topology."""
+
+    TITLE = "ACI Audit Visualizer"
+    CSS = """
+    Screen {
+        background: $surface;
+        color: $text;
+    }
+    Tree {
+        background: $panel;
+        width: 100%;
+        height: 100%;
+        border: round white;
+    }
+    """
+
+    def __init__(self, visualizer, tenant_filter):
+        super().__init__()
+        self.visualizer = visualizer
+        self.tenant_filter = tenant_filter
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        yield Footer()
+        yield TextualTree("ACI Topology", id="tree")
+
+    def on_mount(self) -> None:
+        """Called when app starts, builds the tree, and sets up a refresh timer."""
+        self.build_tree()
+
+    def build_tree(self) -> None:
+        """Fetches data and builds/refreshes the tree view, preserving state."""
+        tree = self.query_one("#tree", TextualTree)
+
+        # Preserve expansion and cursor state
+        expanded_nodes = set()
+
+        def _collect_expanded(node):
+            if node.is_expanded and node.data:
+                expanded_nodes.add(node.data)
+            for child in node.children:
+                _collect_expanded(child)
+        
+        _collect_expanded(tree.root)
+        cursor_node = tree.cursor_node
+        cursor_data = cursor_node.data if cursor_node else None
+        parent_data = cursor_node.parent.data if cursor_node and cursor_node.parent else None
+
+        tree.clear()
+        tree.root.set_label("[bold blue]ACI Audit Topology Report[/bold blue]")
+        
+        data = self.visualizer._fetch_all_data()
+        maps = self.visualizer._process_mappings(data)
+
+        _format_tag = self.visualizer._format_tag
+        _format_scope = self.visualizer._format_scope
+
+        def get_cont_label(name, tenant_name):
+            direction = maps['contract_info'].get((tenant_name, name))
+            if not direction: direction = maps['contract_info'].get(('common', name), 'Bi')
+            return f"{name} ({direction})"
+
+        data_to_node_map = {}
+
+        for t in data['fvTenant']:
+            t_name, t_dn = t['fvTenant']['attributes']['name'], t['fvTenant']['attributes']['dn']
+            if self.tenant_filter and t_name != self.tenant_filter:
+                continue
+            t_node = tree.root.add(f"[bold]Tenant:[/bold] {t_name}", data=t_dn, expand=True)
+            data_to_node_map[t_dn] = t_node
+            
+            tenant_vrfs = [v for v in data['fvCtx'] if v['fvCtx']['attributes']['dn'].startswith(t_dn)]
+            if not tenant_vrfs:
+                t_node.add_leaf("No VRFs found.")
+
+            for v in tenant_vrfs:
+                v_attr = v['fvCtx']['attributes'] 
+                v_dn = v_attr['dn']
+                v_name = v_attr['name']
+                v_node = t_node.add(
+                    f"[bold]VRF:[/bold] {v_name} [dim](VNID: {v_attr.get('scope', 'N/A')}, pcTag: {_format_tag(v_attr.get('pcTag', 'N/A'))})[/dim]",
+                    data=v_dn,
+                    expand=v_dn in expanded_nodes
+                )
+                data_to_node_map[v_dn] = v_node
+
+                # vzAny
+                vzany_dn = f"{v_dn}/any"
+                vz_conts = maps['total_conts'].get(vzany_dn)
+                if vz_conts and (vz_conts['prov'] or vz_conts['cons']):
+                    vzany_node_dn = f"{v_dn}/vzany_node"
+                    vz_node_t = v_node.add(
+                        "[bold magenta]vzAny (VRF Contracts)[/bold magenta]",
+                        data=vzany_node_dn,
+                        expand=vzany_node_dn in expanded_nodes
+                    )
+                    data_to_node_map[vzany_node_dn] = vz_node_t
+                    for p in vz_conts['prov']:
+                        vz_node_t.add_leaf(f"Provides: [cyan]{get_cont_label(p, t_name)}[/cyan]")
+                    for c in vz_conts['cons']:
+                        vz_node_t.add_leaf(f"Consumes: [cyan]{get_cont_label(c, t_name)}[/cyan]")
+
+                # Internal
+                internal_node_dn = f"{v_dn}/internal_node"
+                internal_node = v_node.add(
+                    "[bold]Internal Network & Security[/bold]",
+                    data=internal_node_dn,
+                    expand=internal_node_dn in expanded_nodes
+                )
+                data_to_node_map[internal_node_dn] = internal_node
+                t_bds = [b for b in data['fvBD'] if b['fvBD']['attributes']['dn'].startswith(t_dn) and maps['bd_to_vrf'].get(b['fvBD']['attributes']['dn']) == v_name]
+                if not t_bds:
+                    internal_node.add_leaf("No BDs found.")
+                for b in t_bds:
+                    bd_attr = b['fvBD']['attributes']
+                    bd_name = bd_attr['name']
+                    bd_dn = bd_attr['dn']
+                    bd_node = internal_node.add(
+                        f"[bold]BD:[/bold] {bd_name} [dim](pcTag: {_format_tag(bd_attr.get('pcTag', 'N/A'))})[/dim]",
+                        data=bd_dn,
+                        expand=bd_dn in expanded_nodes
+                    )
+                    data_to_node_map[bd_dn] = bd_node
+                    
+                    epg_found = False
+                    for rs in data['fvRsBd']:
+                        rs_attr = rs['fvRsBd']['attributes']
+                        if rs_attr['tnFvBDName'] == bd_name and rs_attr['dn'].startswith(t_dn):
+                            epg_found = True
+                            epg_dn = rs_attr['dn'].replace('/rsbd', '')
+                            epg_name = epg_dn.split('epg-')[-1]
+                            epg_obj = next((e for e in data['fvAEPg'] if e['fvAEPg']['attributes']['dn'] == epg_dn), None)
+                            pctag = _format_tag(epg_obj['fvAEPg']['attributes'].get('pcTag', 'N/A')) if epg_obj else 'N/A'
+                            
+                            epg_node = bd_node.add(
+                                f"[bold]EPG:[/bold] {epg_name} [dim](pcTag: {pctag})[/dim]",
+                                data=epg_dn,
+                                expand=epg_dn in expanded_nodes
+                            )
+                            data_to_node_map[epg_dn] = epg_node
+                            conts = maps['total_conts'].get(epg_dn, {"prov": [], "cons": []})
+                            for p in conts['prov']:
+                                g = f" [bold red][Graph: {maps['cont_to_graph'][p]}][/bold red]" if p in maps['cont_to_graph'] else ""
+                                epg_node.add_leaf(f"Provides: [cyan]{get_cont_label(p, t_name)}[/cyan]{g}")
+                            for c in conts['cons']:
+                                g = f" [bold red][Graph: {maps['cont_to_graph'][c]}][/bold red]" if c in maps['cont_to_graph'] else ""
+                                epg_node.add_leaf(f"Consumes: [cyan]{get_cont_label(c, t_name)}[/cyan]{g}")
+                    if not epg_found:
+                        bd_node.add_leaf("No EPGs found.")
+
+                # External
+                external_node_dn = f"{v_dn}/external_node"
+                external_node = v_node.add(
+                    "[bold]External Connectivity (L3Out)[/bold]",
+                    data=external_node_dn,
+                    expand=external_node_dn in expanded_nodes
+                )
+                data_to_node_map[external_node_dn] = external_node
+                t_l3s = [l for l in data['l3extOut'] if l['l3extOut']['attributes']['dn'].startswith(t_dn) and maps['l3_to_vrf'].get(l['l3extOut']['attributes']['dn']) == v_name]
+                if not t_l3s:
+                    external_node.add_leaf("No L3Outs found.")
+                for l in t_l3s:
+                    l_dn = l['l3extOut']['attributes']['dn']
+                    all_ads = list(set(maps['vrf_public_subnets'].get(v_name, []))) + maps['l3out_ext_info'].get(l_dn, [])
+                    subnets_str = ", ".join(all_ads) if all_ads else "Private Only"
+                    
+                    l3_node = external_node.add(
+                        f"[bold]L3Out:[/bold] {l['l3extOut']['attributes']['name']}",
+                        data=l_dn,
+                        expand=l_dn in expanded_nodes
+                    )
+                    data_to_node_map[l_dn] = l3_node
+                    l3_node.add_leaf(f"Advertised: [green]{subnets_str}[/green]")
+                    
+                    s_routes = maps['l3out_static_routes'].get(l_dn, [])
+                    if s_routes:
+                        sr_node_dn = f"{l_dn}/static_routes"
+                        sr_node = l3_node.add(
+                            "[bold]Static Routes[/bold]",
+                            data=sr_node_dn,
+                            expand=sr_node_dn in expanded_nodes
+                        )
+                        data_to_node_map[sr_node_dn] = sr_node
+                        grouped_routes = defaultdict(lambda: {'nodes': set(), 'nexthops': set()})
+                        for sr in s_routes:
+                            grouped_routes[sr['prefix']]['nodes'].add(sr['node'])
+                            grouped_routes[sr['prefix']]['nexthops'].update(sr['nexthops'])
+                        
+                        for prefix, info in grouped_routes.items():
+                            sr_node.add_leaf(f"Node {', '.join(sorted(info['nodes']))}: [cyan]{prefix}[/cyan] via [yellow]{', '.join(sorted(info['nexthops']))}[/yellow]")
+
+                    ext_epg_found = False
+                    for instp in data['l3extInstP']:
+                        i_attr = instp['l3extInstP']['attributes']
+                        if i_attr['dn'].startswith(l_dn):
+                            ext_epg_found = True
+                            i_dn = i_attr['dn']
+                            ext_epg_node = l3_node.add(
+                                f"[bold]External EPG:[/bold] {i_attr['name']} [dim](pcTag: {_format_tag(i_attr.get('pcTag', 'N/A'))})[/dim]",
+                                data=i_dn,
+                                expand=i_dn in expanded_nodes
+                            )
+                            data_to_node_map[i_dn] = ext_epg_node
+                            
+                            for sub in maps['instp_subnets'].get(i_dn, []):
+                                scope_str = _format_scope(sub.get('scope', ''))
+                                ext_epg_node.add_leaf(f"Subnet: [bold yellow]{sub['ip']}[/bold yellow] [dim](pcTag: {_format_tag(sub.get('pcTag', 'N/A'))}, Scope: {scope_str})[/dim]")
+
+                            i_conts = maps['total_conts'].get(i_dn, {"prov": [], "cons": []})
+                            for p in i_conts['prov']:
+                                g = f" [bold red][Graph: {maps['cont_to_graph'][p]}][/bold red]" if p in maps['cont_to_graph'] else ""
+                                ext_epg_node.add_leaf(f"Provides: [cyan]{get_cont_label(p, t_name)}[/cyan]{g}")
+                            for c in i_conts['cons']:
+                                g = f" [bold red][Graph: {maps['cont_to_graph'][c]}][/bold red]" if c in maps['cont_to_graph'] else ""
+                                ext_epg_node.add_leaf(f"Consumes: [cyan]{get_cont_label(c, t_name)}[/cyan]{g}")
+                    if not ext_epg_found:
+                        l3_node.add_leaf("No External EPGs found.")
+        
+        # Restore cursor position
+        if cursor_data and cursor_data in data_to_node_map:
+            tree.select_node(data_to_node_map[cursor_data])
+        elif parent_data and parent_data in data_to_node_map:
+            tree.select_node(data_to_node_map[parent_data])
+
+        tree.focus()
+
+    def on_key(self, event: Key) -> None:
+        """Handle key presses for the TUI."""
+        tree = self.query_one("#tree", TextualTree)
+
+        if event.key == "r":
+            self.build_tree()
+            event.prevent_default()
+            return
+
+        if tree.cursor_node:
+            node = tree.cursor_node
+            if event.key == "right":
+                if not node.is_expanded:
+                    # If collapsed, expand it.
+                    node.expand()
+                elif node.children:
+                    # If already expanded, move to the first child.
+                    tree.select_node(node.children[0])
+                event.prevent_default()
+            elif event.key == "left":
+                if node.is_expanded:
+                    # If expanded, collapse it.
+                    node.collapse()
+                elif node.parent:
+                    # If collapsed, move to the parent.
+                    tree.select_node(node.parent)
+                event.prevent_default()
+            elif event.key == "enter":
+                # Toggle expand-all/collapse
+                if tree.cursor_node.is_expanded:
+                    tree.cursor_node.collapse()
+                else:
+                    tree.cursor_node.expand_all()
+                event.prevent_default() # Prevent default 'select' action
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="ACI Audit Visualizer")
     parser.add_argument("--tenant", help="Filter by Tenant name", default=None)
+    parser.add_argument("--display", choices=['tree', 'tui'], default='tree', help="Output format: tree (default) or tui (interactive)")
     args = parser.parse_args()
 
     visualizer = ACIFullAuditVisualizer("https://192.168.200.131", "admin", "p@ssw0rd")
-    visualizer.visualize_tree(tenant_filter=args.tenant)
+    visualizer.visualize_tree(tenant_filter=args.tenant, display_mode=args.display)
