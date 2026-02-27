@@ -57,8 +57,8 @@ The script can be run directly with `python` or using a project runner like `uv`
 ### Command-Line Options
 
 ```
-aci-treeviwer % uv run aci-v2.py --help
-usage: aci-v2.py [-h] [--tenant TENANT]
+aci-treeviwer % uv run aci-tree-viewer.py --help
+usage: aci-tree-viewer.py [-h] [--tenant TENANT]
 
 ACI Audit Visualizer
 
@@ -68,7 +68,7 @@ options:
 ```
 ## Output example
 ```
-aci-treeviwer % uv run aci-v2.py
+aci-treeviwer % uv run aci-tree-viewer.py
 [*] Connected to https://192.168.200.131
 ACI Audit Topology Report (with Service Graph & pcTag)
 ├── Tenant: mgmt
