@@ -3,11 +3,12 @@
 A powerful command-line tool to visualize Cisco ACI fabric configurations in a hierarchical tree structure. It provides both static and interactive TUI (Text User Interface) modes for intuitive browsing and analysis of your ACI environment.
 
 ## Key Features
-
 *   **Multiple Display Modes**:
     *   **`tree` (default)**: A static, color-coded tree view of the entire ACI configuration, perfect for quick overviews and generating reports.
     *   **`tui` (interactive)**: A full-featured, interactive terminal application for in-depth, real-time analysis.
-
+*   **Multiple Views**:
+    *   **Network-Centric**: Traditional `Tenant` -> `VRF` -> `BD` -> `EPG` hierarchy.
+    *   **Application-Centric**: `Tenant` -> `Contract` -> `Providers/Consumers` view.
 *   **Interactive TUI Mode (`--display tui`)**:
     *   **Dual-View System**:
         *   **Network-Centric View**: The traditional hierarchy (`Tenant` -> `VRF` -> `BD` -> `EPG`).
@@ -21,6 +22,11 @@ A powerful command-line tool to visualize Cisco ACI fabric configurations in a h
         *   The details pane also shows the corresponding REST API `GET` request used to fetch the object's data, aiding in automation and learning.
     *   **On-demand Refresh**:
         *   Press the `r` key at any time to fetch the latest data from the APIC and refresh the display.
+    *   **Enhanced Navigation**:
+        *   Use the `right arrow` key to expand a node (except the root node) and all its children recursively.
+        *   Use the `left arrow` key to collapse the current node.
+    *   **Safe Quit**:
+        *   Press the `q` key to open a confirmation dialog before exiting the application.
 
 *   **Secure External Configuration**:
     *   APIC connection details (URL, username, password) are managed in an external `config.ini` file, keeping sensitive credentials out of the source code.
@@ -29,7 +35,6 @@ A powerful command-line tool to visualize Cisco ACI fabric configurations in a h
     *   Use the `--tenant` flag to focus the view on a single tenant, simplifying analysis in large environments.
 
 ## Setup
-
 1.  **Install Dependencies**:
     This project uses `requests`, `rich`, and `textual`. You can install them using `pip` or your preferred package manager.
     - Using `pip`:
@@ -40,7 +45,7 @@ A powerful command-line tool to visualize Cisco ACI fabric configurations in a h
       ```shell
       uv pip install requests rich textual
       ```
-
+ 
 2.  **Create Configuration File**:
     In the same directory as the script, create a file named `config.ini` with your APIC connection details:
     ```ini
@@ -49,7 +54,6 @@ A powerful command-line tool to visualize Cisco ACI fabric configurations in a h
     USER = <your-username>
     PASSWORD = <your-password>
     ```
-
 ## Usage
 
 The script can be run directly with `python` or using a project runner like `uv`. The examples below use `uv`.

@@ -10,9 +10,11 @@ from rich.console import Console
 from rich.tree import Tree
 from rich.text import Text
 from textual.app import App, ComposeResult
-from textual.widgets import Header, Footer, Tree as TextualTree, Static
-from textual.containers import Container
+from textual.widgets import Header, Footer, Tree as TextualTree, Static, Button, Label
+from textual.containers import Container, ScrollableContainer, Vertical
 from textual.events import Key
+from rich.panel import Panel
+from textual.screen import ModalScreen
 
 
 # SSL 인증서 경고 무시
@@ -119,72 +121,79 @@ class AciTreeViewer:
 
         # 4. Subnet 및 광고 정보
         vrf_public_subnets = defaultdict(list)
-        for s in data['fvSubnet']:
-            attr = s['fvSubnet']['attributes']
-            if 'public' in attr.get('scope', ''):
-                bd_dn = attr['dn'].split('/subnet-')[0]
-                v_name = bd_to_vrf.get(bd_dn)
-                if v_name: vrf_public_subnets[v_name].append(attr['ip'])
+        for s in data.get('fvSubnet', []):
+            if 'fvSubnet' in s:
+                attr = s['fvSubnet']['attributes']
+                if 'public' in attr.get('scope', ''):
+                    bd_dn = attr['dn'].split('/subnet-')[0]
+                    v_name = bd_to_vrf.get(bd_dn)
+                    if v_name: vrf_public_subnets[v_name].append(attr['ip'])
 
         l3out_ext_info = defaultdict(list)
-        for ls in data['l3extSubnet']:
-            attr = ls['l3extSubnet']['attributes']
-            ip, pctag = attr.get('ip', ''), attr.get('pcTag')
-            if not pctag or pctag in ['0', 'unspecified']: pctag = '15' if ip == '0.0.0.0/0' else 'N/A'
-            match = re.match(r'(uni/tn-[^/]+/out-[^/]+)', attr['dn'])
-            if match and (ip == '0.0.0.0/0' or pctag == '15'):
-                l3out_ext_info[match.group(1)].append(f"0.0.0.0/0 (pcTag:{self._format_tag(pctag)})")
+        for ls in data.get('l3extSubnet', []):
+            if 'l3extSubnet' in ls:
+                attr = ls['l3extSubnet']['attributes']
+                ip, pctag = attr.get('ip', ''), attr.get('pcTag')
+                if not pctag or pctag in ['0', 'unspecified']: pctag = '15' if ip == '0.0.0.0/0' else 'N/A'
+                match = re.match(r'(uni/tn-[^/]+/out-[^/]+)', attr['dn'])
+                if match and (ip == '0.0.0.0/0' or pctag == '15'):
+                    l3out_ext_info[match.group(1)].append(f"0.0.0.0/0 (pcTag:{self._format_tag(pctag)})")
 
         # 5. Contract Direction (vzSubj)
         contract_info = {}
         for subj in data.get('vzSubj', []):
-            attr = subj['vzSubj']['attributes']
-            dn = attr['dn']
-            # dn: uni/tn-{t}/brc-{c}/subj-{s}
-            match = re.search(r'uni/tn-([^/]+)/brc-([^/]+)', dn)
-            if match:
-                key = (match.group(1), match.group(2))
-                direction = "Bi" if attr.get('revFltPorts', 'yes') == 'yes' else "Uni"
-                # If any subject is Bi, treat contract as Bi
-                if key not in contract_info or direction == "Bi":
-                    contract_info[key] = direction
+            if 'vzSubj' in subj:
+                attr = subj['vzSubj']['attributes']
+                dn = attr['dn']
+                # dn: uni/tn-{t}/brc-{c}/subj-{s}
+                match = re.search(r'uni/tn-([^/]+)/brc-([^/]+)', dn)
+                if match:
+                    key = (match.group(1), match.group(2))
+                    direction = "Bi" if attr.get('revFltPorts', 'yes') == 'yes' else "Uni"
+                    # If any subject is Bi, treat contract as Bi
+                    if key not in contract_info or direction == "Bi":
+                        contract_info[key] = direction
 
         # 6. L3Out InstP Subnets
         instp_subnets = defaultdict(list)
-        for sub in data['l3extSubnet']:
-            attr = sub['l3extSubnet']['attributes']
-            match = re.match(r'(.+/instP-[^/]+)/extsubnet-.+', attr['dn'])
-            if match:
-                instp_subnets[match.group(1)].append(attr)
+        for sub in data.get('l3extSubnet', []):
+            if 'l3extSubnet' in sub:
+                attr = sub['l3extSubnet']['attributes']
+                match = re.match(r'(.+/instP-[^/]+)/extsubnet-.+', attr['dn'])
+                if match:
+                    instp_subnets[match.group(1)].append(attr)
 
         # 7. Static Routes Mapping
         l3out_static_routes = defaultdict(list)
         route_dn_map = {}
         
         for r in data.get('ipRouteP', []):
-            attr = r['ipRouteP']['attributes']
-            dn = attr['dn']
-            l3_match = re.match(r'(uni/tn-[^/]+/out-[^/]+)', dn)
-            node_match = re.search(r'node-(\d+)', dn)
-            
-            if l3_match:
-                l3_dn = l3_match.group(1)
-                route_obj = {'prefix': attr.get('ip', '0.0.0.0/0'), 'node': node_match.group(1) if node_match else "All", 'nexthops': [], 'dn': dn}
-                l3out_static_routes[l3_dn].append(route_obj)
-                route_dn_map[dn] = route_obj
+            if 'ipRouteP' in r:
+                attr = r['ipRouteP']['attributes']
+                dn = attr['dn']
+                l3_match = re.match(r'(uni/tn-[^/]+/out-[^/]+)', dn)
+                node_match = re.search(r'node-(\d+)', dn)
+                
+                if l3_match:
+                    l3_dn = l3_match.group(1)
+                    route_obj = {'prefix': attr.get('ip', '0.0.0.0/0'), 'node': node_match.group(1) if node_match else "All", 'nexthops': [], 'dn': dn}
+                    l3out_static_routes[l3_dn].append(route_obj)
+                    route_dn_map[dn] = route_obj
 
         for nh in data.get('ipNexthopP', []):
-            attr = nh['ipNexthopP']['attributes']
-            p_dn = attr['dn'].rsplit('/', 1)[0]
-            if p_dn in route_dn_map:
-                route_dn_map[p_dn]['nexthops'].append(attr.get('nhAddr', ''))
+            if 'ipNexthopP' in nh:
+                attr = nh['ipNexthopP']['attributes']
+                p_dn = attr['dn'].rsplit('/', 1)[0]
+                if p_dn in route_dn_map:
+                    route_dn_map[p_dn]['nexthops'].append(attr.get('nhAddr', ''))
 
         # 8. Health and Fault Mapping
-        health_map = {h['healthInst']['attributes']['dn']: h['healthInst']['attributes']['cur'] for h in data.get('healthInst', [])}
+        health_map = {h['healthInst']['attributes']['dn']: h['healthInst']['attributes']['cur'] for h in data.get('healthInst', []) if 'healthInst' in h}
         fault_map = defaultdict(int)
         for f in data.get('faultInst', []):
-            parent_dn = f['faultInst']['attributes']['dn'].rsplit('/fault-', 1)[0]
-            fault_map[parent_dn] += 1
+            if 'faultInst' in f:
+                parent_dn = f['faultInst']['attributes']['dn'].rsplit('/fault-', 1)[0]
+                fault_map[parent_dn] += 1
         
         # 9. DN to Full Object and App-Centric Mapping
         dn_to_full_obj = {}
@@ -197,11 +206,13 @@ class AciTreeViewer:
                         dn_to_full_obj[attrs['dn']] = attrs
         
         app_centric_map = defaultdict(lambda: {'prov': set(), 'cons': set()})
-        dn_to_name = {t['fvTenant']['attributes']['dn']: t['fvTenant']['attributes']['name'] for t in data['fvTenant']}
+        dn_to_name = {t['fvTenant']['attributes']['dn']: t['fvTenant']['attributes']['name'] for t in data.get('fvTenant', []) if 'fvTenant' in t}
         for epg in data.get('fvAEPg', []):
-            dn_to_name[epg['fvAEPg']['attributes']['dn']] = epg['fvAEPg']['attributes']['name']
+            if 'fvAEPg' in epg:
+                dn_to_name[epg['fvAEPg']['attributes']['dn']] = epg['fvAEPg']['attributes']['name']
         for epg in data.get('l3extInstP', []):
-            dn_to_name[epg['l3extInstP']['attributes']['dn']] = epg['l3extInstP']['attributes']['name']
+            if 'l3extInstP' in epg:
+                dn_to_name[epg['l3extInstP']['attributes']['dn']] = epg['l3extInstP']['attributes']['name']
         for dn, conts in total_conts.items():
             if not ('/epg-' in dn or '/instP-' in dn): continue
             tenant_match = re.match(r'uni/tn-([^/]+)', dn)
@@ -340,12 +351,36 @@ class AciTreeViewer:
         
         console.print(root)
 
+class QuitScreen(ModalScreen):
+    """Screen with a dialog to quit."""
+
+    def compose(self) -> ComposeResult:
+        yield Vertical(
+            Label("Are you sure you want to quit? (y/n)", id="question"),
+            Button("Yes", variant="error", id="quit"),
+            Button("No", variant="primary", id="cancel"),
+            id="dialog",
+        )
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "quit":
+            self.app.exit()
+        else:
+            self.app.pop_screen()
+
+    def on_key(self, event: Key) -> None:
+        if event.key == "y":
+            self.app.exit()
+        elif event.key == "n":
+            self.app.pop_screen()
+
 class AciTreeViewerApp(App):
     """A Textual app to view ACI topology."""
 
     BINDINGS = [
         ("r", "refresh", "Refresh"),
         ("v", "toggle_view", "Toggle View"),
+        ("q", "quit", "Quit"),
     ]
 
     TITLE = "ACI Tree Viewer"
@@ -364,6 +399,25 @@ class AciTreeViewerApp(App):
     }
     #details-pane {
         padding: 0 1;
+        width: 40%;
+    }
+    QuitScreen {
+        align: center middle;
+    }
+    #dialog {
+        padding: 1 2;
+        width: 36;
+        height: auto;
+        border: round $primary;
+        background: $surface;
+    }
+    #question {
+        margin-bottom: 1;
+        text-align: center;
+    }
+    #dialog > Button {
+        width: 100%;
+        margin-top: 1;
     }
     """
 
@@ -371,6 +425,7 @@ class AciTreeViewerApp(App):
         super().__init__()
         self.viewer = viewer
         self.tenant_filter = tenant_filter
+        self.views = ['network', 'application']
         self.current_view = 'network'
         self.data = {}
         self.maps = {}
@@ -388,14 +443,19 @@ class AciTreeViewerApp(App):
 
     def build_tree(self) -> None:
         """Fetches data and dispatches to the correct tree builder."""
-        self.sub_title = f"View: {self.current_view.capitalize()} | Last updated: {datetime.now().strftime('%H:%M:%S')}"
+        view_map = {'network': 'Network', 'application': 'App'}
+        filter_status = ""
+        if self.tenant_filter:
+            filter_status = f" | Filter: {self.tenant_filter}"
+
+        self.sub_title = f"View: {view_map.get(self.current_view, 'Unknown')}{filter_status} | Last updated: {datetime.now().strftime('%H:%M:%S')}"
         
         self.data = self.viewer._fetch_all_data()
         self.maps = self.viewer._process_mappings(self.data)
 
         if self.current_view == 'network':
             self._build_network_tree()
-        else:
+        elif self.current_view == 'application':
             self._build_app_tree()
 
     def _build_network_tree(self) -> None:
@@ -404,6 +464,9 @@ class AciTreeViewerApp(App):
 
         # Preserve expansion and cursor state
         expanded_nodes = set()
+
+        # The first build is when the tree root has no children yet.
+        is_initial_build = not tree.root.children
 
         def _collect_expanded(node):
             if node.is_expanded and node.data:
@@ -433,7 +496,11 @@ class AciTreeViewerApp(App):
             if self.tenant_filter and t_name != self.tenant_filter:
                 continue
             health_status = self.viewer._format_health_status(t_dn, maps['health_map'], maps['fault_map'])
-            t_node = tree.root.add(f"[bold]Tenant:[/bold] {t_name}{health_status}", data=t_dn, expand=True)
+            t_node = tree.root.add(
+                f"[bold]Tenant:[/bold] {t_name}{health_status}",
+                data=t_dn,
+                expand=is_initial_build or t_dn in expanded_nodes
+            )
             data_to_node_map[t_dn] = t_node
             
             tenant_vrfs = [v for v in data['fvCtx'] if v['fvCtx']['attributes']['dn'].startswith(t_dn)]
@@ -652,15 +719,35 @@ class AciTreeViewerApp(App):
         self.current_view = 'application' if self.current_view == 'network' else 'network'
         self.build_tree()
         
+    def action_quit(self) -> None:
+        """Show the quit dialog."""
+        self.push_screen(QuitScreen())
+        
     def on_key(self, event: Key) -> None:
         """Handle key presses for the TUI."""
-        if event.key == "enter":
-            tree = self.query_one("#tree", TextualTree)
-            if not tree.cursor_node:
-                return
+        tree = self.query_one("#tree", TextualTree)
+        if not tree.cursor_node:
+            return
+        
+        node = tree.cursor_node
 
+        if event.key == "right":
+            # Only perform recursive expand if not on the root node.
+            if node is not tree.root:
+                def expand_all(node_to_expand):
+                    node_to_expand.expand()
+                    for child in node_to_expand.children:
+                        expand_all(child)
+                expand_all(node)
+            event.prevent_default()
+        
+        elif event.key == "left":
+            node.collapse()
+            event.prevent_default()
+
+        elif event.key == "enter":
             details_pane = self.query_one("#details-pane", Static)
-            node_data = tree.cursor_node.data
+            node_data = node.data
 
             if not node_data:
                 details_pane.update("Select an object to see details.")
