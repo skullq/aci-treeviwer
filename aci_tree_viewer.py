@@ -321,13 +321,14 @@ class AciTreeViewer:
                     s_routes = maps['l3out_static_routes'].get(l_dn, [])
                     if s_routes:
                         sr_node = l3_node.add("[bold]Static Routes[/bold]")
-                        grouped_routes = defaultdict(lambda: {'nodes': set(), 'nexthops': set()})
+                        nodes_routes = defaultdict(list)
                         for sr in s_routes:
-                            grouped_routes[sr['prefix']]['nodes'].add(sr['node'])
-                            grouped_routes[sr['prefix']]['nexthops'].update(sr['nexthops'])
-                        
-                        for prefix, info in grouped_routes.items():
-                            sr_node.add(f"Node {', '.join(sorted(info['nodes']))}: [cyan]{prefix}[/cyan] via [yellow]{', '.join(sorted(info['nexthops']))}[/yellow]")
+                            nodes_routes[sr['node']].append(sr)
+                        for node_id, routes in sorted(nodes_routes.items()):
+                            node_branch = sr_node.add(f"[bold]Node {node_id}[/bold]")
+                            for sr in sorted(routes, key=lambda x: x['prefix']):
+                                nexthops = ", ".join(sorted(sr['nexthops']))
+                                node_branch.add(f"[cyan]{sr['prefix']}[/cyan] via [yellow]{nexthops}[/yellow]")
 
                     # L3Out External EPG 및 Contract 매핑
                     for instp in data['l3extInstP']:
@@ -618,13 +619,26 @@ class AciTreeViewerApp(App):
                             expand=sr_node_dn in expanded_nodes
                         )
                         data_to_node_map[sr_node_dn] = sr_node
-                        grouped_routes = defaultdict(lambda: {'nodes': set(), 'nexthops': set()})
-                        for sr in s_routes:
-                            grouped_routes[sr['prefix']]['nodes'].add(sr['node'])
-                            grouped_routes[sr['prefix']]['nexthops'].update(sr['nexthops'])
                         
-                        for prefix, info in grouped_routes.items():
-                            sr_node.add_leaf(f"Node {', '.join(sorted(info['nodes']))}: [cyan]{prefix}[/cyan] via [yellow]{', '.join(sorted(info['nexthops']))}[/yellow]")
+                        nodes_routes = defaultdict(list)
+                        for sr in s_routes:
+                            nodes_routes[sr['node']].append(sr)
+
+                        for node_id, routes in sorted(nodes_routes.items()):
+                            node_dn = f"{sr_node_dn}/node-{node_id}"
+                            node_branch = sr_node.add(
+                                f"[bold]Node {node_id}[/bold]",
+                                data=node_dn,
+                                expand=node_dn in expanded_nodes
+                            )
+                            data_to_node_map[node_dn] = node_branch
+                            
+                            for sr in sorted(routes, key=lambda x: x['prefix']):
+                                nexthops = ", ".join(sorted(sr['nexthops']))
+                                node_branch.add_leaf(
+                                    f"[cyan]{sr['prefix']}[/cyan] via [yellow]{nexthops}[/yellow]", 
+                                    data=sr['dn']
+                                )
 
                     ext_epg_found = False
                     for instp in data['l3extInstP']:
