@@ -10,12 +10,12 @@ from rich.console import Console
 from rich.tree import Tree
 from rich.text import Text
 from textual.app import App, ComposeResult
-from textual.widgets import Header, Footer, Tree as TextualTree, Static, Button, Label
+from textual.widgets import Header, Footer, Tree as TextualTree, Static, Button, Label, Tabs, Tab
 from textual.containers import Container, ScrollableContainer, Vertical
 from textual.events import Key
 from rich.panel import Panel
 from textual.screen import ModalScreen
-
+from textual.message import Message
 
 # SSL 인증서 경고 무시
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -74,17 +74,18 @@ class AciTreeViewer:
             parts.append(f"[bold red]❗{faults}[/bold red]")
         return f" ({', '.join(parts)})" if parts else ""
 
-    def _fetch_all_data(self):
+    def _fetch_all_data(self, specific_classes=None):
         """모든 ACI 객체 데이터 수집"""
-        classes = [
+        all_classes = [
             'fvTenant', 'fvCtx', 'fvBD', 'fvAEPg', 'fvSubnet',
             'l3extOut', 'l3extInstP', 'l3extSubnet',
             'fvRsProv', 'fvRsCons', 'l3extRsProv', 'l3extRsCons',
             'vnsRsAbsGraphAtt', 'fvRsCtx', 'fvRsBd', 'l3extRsEctx',
-            'vzAny', 'vzRsAnyToProv', 'vzRsAnyToCons', 'vzSubj', 'ipRouteP',
-            'ipNexthopP', 'healthInst', 'faultInst'
+            'vzAny', 'vzRsAnyToProv', 'vzRsAnyToCons', 'vzSubj', 'vzBrCP', 'ipRouteP', 'fabricNode', 'fabricVpcRT', 'fvRsPathAtt',
+            'ipNexthopP', 'healthInst', 'faultInst', 'l3extRsPathL3OutAtt', 'lldpAdjEp', 'vnsRsCIfPathAtt'
         ]
-        return {cls: self.get_data(cls) for cls in classes}
+        classes_to_fetch = specific_classes if specific_classes else all_classes
+        return {cls: self.get_data(cls) for cls in classes_to_fetch}
 
     def _process_mappings(self, data):
         """데이터 관계 매핑 생성"""
@@ -119,8 +120,25 @@ class AciTreeViewer:
         safe_map(data['vzRsAnyToProv'], 'vzRsAnyToProv', 'prov')
         safe_map(data['vzRsAnyToCons'], 'vzRsAnyToCons', 'cons')
 
+        # Map: (Tenant, ContractName) -> Scope
+        contract_scopes = {}
+        for c in data.get('vzBrCP', []):
+            if 'vzBrCP' in c:
+                attr = c['vzBrCP']['attributes']
+                dn = attr['dn']
+                match = re.match(r'uni/tn-([^/]+)/brc-([^/]+)', dn)
+                if match:
+                    contract_scopes[(match.group(1), match.group(2))] = attr.get('scope', 'unknown')
+
         # 4. Subnet 및 광고 정보
         vrf_public_subnets = defaultdict(list)
+        bd_subnets = defaultdict(list)
+        for s in data.get('fvSubnet', []):
+            if 'fvSubnet' in s:
+                attr = s['fvSubnet']['attributes']
+                bd_dn = attr['dn'].split('/subnet-')[0]
+                bd_subnets[bd_dn].append(attr['ip'])
+
         for s in data.get('fvSubnet', []):
             if 'fvSubnet' in s:
                 attr = s['fvSubnet']['attributes']
@@ -205,8 +223,114 @@ class AciTreeViewer:
                     if 'dn' in attrs:
                         dn_to_full_obj[attrs['dn']] = attrs
         
-        app_centric_map = defaultdict(lambda: {'prov': set(), 'cons': set()})
         dn_to_name = {t['fvTenant']['attributes']['dn']: t['fvTenant']['attributes']['name'] for t in data.get('fvTenant', []) if 'fvTenant' in t}
+        for epg in data.get('fvAEPg', []):
+            if 'fvAEPg' in epg:
+                dn = epg['fvAEPg']['attributes']['dn']
+                name = epg['fvAEPg']['attributes']['name']
+                tenant_match = re.search(r'tn-([^/]+)', dn)
+                ap_match = re.search(r'ap-([^/]+)', dn)
+                if tenant_match and ap_match:
+                    dn_to_name[dn] = f"{tenant_match.group(1)}/{ap_match.group(1)}/{name}"
+                else:
+                    dn_to_name[dn] = name
+
+        # 10. vPC Pairs
+        vpc_pairs = {}
+        processed_vpc_nodes = set()
+        for rt in data.get('fabricVpcRT', []):
+            if 'fabricVpcRT' in rt:
+                dn = rt['fabricVpcRT']['attributes']['dn']
+                match = re.search(r'rt-vpcp-.+-(\d+)-(\d+)', dn)
+                if match:
+                    node1, node2 = sorted([match.group(1), match.group(2)])
+                    if node1 not in processed_vpc_nodes and node2 not in processed_vpc_nodes:
+                        vpc_pairs[node1] = node2
+                        processed_vpc_nodes.add(node1)
+                        processed_vpc_nodes.add(node2)
+
+        # 11. Port Mappings
+        port_details_map = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+
+        def parse_path_dn(t_dn):
+            """Parses tDn to extract node(s) and interface."""
+            # Single Node: topology/pod-1/paths-101/pathep-[eth1/1]
+            s_match = re.search(r'paths-(\d+)/pathep-\[(.+?)\]', t_dn)
+            if s_match:
+                return [(s_match.group(1), s_match.group(2))]
+            
+            # vPC: topology/pod-1/protpaths-101-102/pathep-[eth1/1]
+            v_match = re.search(r'protpaths-(\d+)-(\d+)/pathep-\[(.+?)\]', t_dn)
+            if v_match:
+                return [(v_match.group(1), v_match.group(3)), (v_match.group(2), v_match.group(3))]
+            return []
+
+        # EPGs
+        for path in data.get('fvRsPathAtt', []):
+            if 'fvRsPathAtt' in path:
+                attr = path['fvRsPathAtt']['attributes']
+                epg_dn = attr['dn'].split('/rspathAtt-')[0]
+                path_dn = attr['tDn']
+                vlan = attr.get('encap', 'untagged').replace('vlan-', '')
+                
+                for node_id, if_name in parse_path_dn(path_dn):
+                    epg_name = dn_to_name.get(epg_dn, epg_dn)
+                    port_details_map[node_id][if_name][vlan].append({'type': 'EPG', 'name': epg_name})
+
+        # L3Outs
+        for path in data.get('l3extRsPathL3OutAtt', []):
+            if 'l3extRsPathL3OutAtt' in path:
+                attr = path['l3extRsPathL3OutAtt']['attributes']
+                dn = attr['dn']
+                path_dn = attr['tDn']
+                vlan = attr.get('encap', 'untagged').replace('vlan-', '')
+                # Extract L3Out Name: uni/tn-X/out-Y/...
+                l3_match = re.search(r'out-([^/]+)', dn)
+                l3_name = l3_match.group(1) if l3_match else "Unknown L3Out"
+                
+                for node_id, if_name in parse_path_dn(path_dn):
+                    port_details_map[node_id][if_name][vlan].append({'type': 'L3Out', 'name': l3_name})
+
+        # Service Graphs (L4-L7)
+        for path in data.get('vnsRsCIfPathAtt', []):
+            if 'vnsRsCIfPathAtt' in path:
+                attr = path['vnsRsCIfPathAtt']['attributes']
+                dn = attr['dn']
+                path_dn = attr['tDn']
+                # Extract Device Name: uni/tn-X/lDevVip-Dev/cDev-Node/cIf-Int/...
+                dev_match = re.search(r'lDevVip-([^/]+)', dn)
+                dev_name = dev_match.group(1) if dev_match else "Unknown Device"
+                
+                for node_id, if_name in parse_path_dn(path_dn):
+                    port_details_map[node_id][if_name]['untagged'].append({'type': 'Service', 'name': dev_name})
+
+        # LLDP Neighbors (Switch Links)
+        for adj in data.get('lldpAdjEp', []):
+            if 'lldpAdjEp' in adj:
+                attr = adj['lldpAdjEp']['attributes']
+                dn = attr['dn']
+                # topology/pod-1/node-101/sys/lldp/inst/if-[eth1/49]/adj-1
+                node_match = re.search(r'node-(\d+)', dn)
+                if_match = re.search(r'if-\[(.+?)\]', dn)
+                
+                if node_match and if_match:
+                    node_id = node_match.group(1)
+                    if_name = if_match.group(1)
+                    sys_name = attr.get('sysName', 'Unknown')
+                    port_desc = attr.get('portDesc', '')
+                    port_details_map[node_id][if_name]['-neighbor'].append({'type': 'Neighbor', 'name': sys_name, 'remote': port_desc})
+
+        app_centric_map = defaultdict(lambda: {'prov': set(), 'cons': set()})
+        contract_providers = defaultdict(set)
+        dn_to_name = {t['fvTenant']['attributes']['dn']: t['fvTenant']['attributes']['name'] for t in data.get('fvTenant', []) if 'fvTenant' in t}
+        
+        epg_to_bd = {}
+        for rs in data.get('fvRsBd', []):
+            if 'fvRsBd' in rs:
+                attr = rs['fvRsBd']['attributes']
+                epg_dn = attr['dn'].replace('/rsbd', '')
+                epg_to_bd[epg_dn] = attr['tDn']
+
         for epg in data.get('fvAEPg', []):
             if 'fvAEPg' in epg:
                 dn_to_name[epg['fvAEPg']['attributes']['dn']] = epg['fvAEPg']['attributes']['name']
@@ -214,13 +338,26 @@ class AciTreeViewer:
             if 'l3extInstP' in epg:
                 dn_to_name[epg['l3extInstP']['attributes']['dn']] = epg['l3extInstP']['attributes']['name']
         for dn, conts in total_conts.items():
-            if not ('/epg-' in dn or '/instP-' in dn): continue
+            if not ('/epg-' in dn or '/instP-' in dn or dn.endswith('/any')): continue
             tenant_match = re.match(r'uni/tn-([^/]+)', dn)
             if not tenant_match: continue
             tenant_name = tenant_match.group(1)
-            epg_name = dn_to_name.get(dn, dn.split('/')[-1])
+            
+            if dn.endswith('/any'):
+                vrf_match = re.search(r'/ctx-([^/]+)/', dn)
+                vrf_name = vrf_match.group(1) if vrf_match else "Unknown"
+                epg_name = f"vzAny ({vrf_name})"
+            else:
+                epg_name = dn_to_name.get(dn, dn.split('/')[-1])
+
             for contract_name in conts['prov']:
+                c_owner = tenant_name
+                if (tenant_name, contract_name) not in contract_scopes:
+                    if ('common', contract_name) in contract_scopes:
+                        c_owner = 'common'
+
                 app_centric_map[(tenant_name, contract_name)]['prov'].add((epg_name, dn))
+                contract_providers[(c_owner, contract_name)].add((tenant_name, epg_name, dn))
             for contract_name in conts['cons']:
                 app_centric_map[(tenant_name, contract_name)]['cons'].add((epg_name, dn))
 
@@ -232,9 +369,11 @@ class AciTreeViewer:
             'vrf_public_subnets': vrf_public_subnets,
             'l3out_ext_info': l3out_ext_info,
             'contract_info': contract_info,
-            'instp_subnets': instp_subnets, 'l3out_static_routes': l3out_static_routes,
+            'instp_subnets': instp_subnets, 'l3out_static_routes': l3out_static_routes, 'bd_subnets': bd_subnets, 'epg_to_bd': epg_to_bd,
             'health_map': health_map, 'fault_map': fault_map, 'app_centric_map': app_centric_map,
-            'dn_to_full_obj': dn_to_full_obj
+            'dn_to_full_obj': dn_to_full_obj, 'contract_providers': contract_providers,
+            'contract_scopes': contract_scopes, 'vpc_pairs': vpc_pairs,
+            'port_details_map': port_details_map
         }
 
     def visualize_tree(self, tenant_filter=None, display_mode='tree'):
@@ -352,6 +491,73 @@ class AciTreeViewer:
         
         console.print(root)
 
+# --- Custom Messages for Worker Communication ---
+class StatusUpdate(Message):
+    """A message to update the loading status."""
+    def __init__(self, message: str, color: str = "yellow") -> None:
+        self.message = message
+        self.color = color
+        super().__init__()
+
+class LoadingComplete(Message):
+    """A message to indicate that loading is complete."""
+    pass
+# ----------------------------------------------
+
+class WelcomeScreen(ModalScreen):
+    """Screen with a welcome message."""
+
+    def __init__(self, is_help_view: bool = False, **kwargs):
+        self.is_help_view = is_help_view
+        super().__init__(**kwargs)
+
+    def compose(self) -> ComposeResult:
+        common_widgets = [
+            Label("Welcome to ACI Tree Viewer", classes="welcome-header"),
+            Label(" ", classes="welcome-text"),
+            Label("Use [bold]Tab[/bold] to switch focus between Tabs and Tree.", classes="welcome-text"),
+            Label("When Tabs are focused, use [bold]Left/Right[/bold] to switch views.", classes="welcome-text"),
+            Label(" ", classes="welcome-text"),
+            Label("[u]Key Bindings:[/u]", classes="welcome-text"),
+            Label("  [bold]r[/bold]          Refresh Data", classes="welcome-text"),
+            Label("  [bold]q[/bold]          Quit", classes="welcome-text"),
+            Label("  [bold]Up/Down[/bold]    Navigate Tree Nodes", classes="welcome-text"),
+            Label("  [bold]Left/Right[/bold] Collapse/Expand Node", classes="welcome-text"),
+            Label("  [bold]Space[/bold]       Toggle Node Expansion", classes="welcome-text"),
+            Label(" ", classes="welcome-text"),
+        ]
+        if self.is_help_view:
+            action_widgets = [Button("Close", variant="primary", id="start")]
+        else:
+            action_widgets = [
+                Label("Initializing...", id="loading_status", classes="welcome-text"),
+                Button("Start Exploring", variant="primary", id="start", disabled=True),
+            ]
+        
+        yield Vertical(*common_widgets, *action_widgets, id="welcome_dialog")
+
+    def update_status(self, msg, color="yellow"):
+        lbl = self.query_one("#loading_status")
+        lbl.update(msg)
+        lbl.styles.color = color
+
+    def enable_start_button(self):
+        btn = self.query_one("#start")
+        btn.disabled = False
+        btn.focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.app.pop_screen()
+    
+    def on_key(self, event: Key) -> None:
+        self.app.pop_screen()
+
+    def on_status_update(self, message: StatusUpdate) -> None:
+        self.update_status(message.message, message.color)
+
+    def on_loading_complete(self, message: LoadingComplete) -> None:
+        self.enable_start_button()
+
 class QuitScreen(ModalScreen):
     """Screen with a dialog to quit."""
 
@@ -380,7 +586,6 @@ class AciTreeViewerApp(App):
 
     BINDINGS = [
         ("r", "refresh", "Refresh"),
-        ("v", "toggle_view", "Toggle View"),
         ("q", "quit", "Quit"),
     ]
 
@@ -388,22 +593,45 @@ class AciTreeViewerApp(App):
     CSS = """
     Screen {
         layout: vertical;
+        background: black;
     }
     #main-container {
         layout: horizontal;
         height: 1fr;
     }
     Tree {
-        background: $panel;
-        width: 60%;
+        background: black;
+        width: 100%;
         border: round white;
+        scrollbar-color: white;
+        scrollbar-background: black;
     }
-    #details-pane {
-        padding: 0 1;
-        width: 40%;
+    Tabs {
+        dock: top;
     }
-    QuitScreen {
+    WelcomeScreen {
         align: center middle;
+        background: rgba(0,0,0,0.7);
+    }
+    #welcome_dialog {
+        padding: 1 2;
+        width: 60;
+        height: auto;
+        border: round $primary;
+        background: $surface;
+    }
+    .welcome-header {
+        text-align: center;
+        color: green;
+        text-style: bold;
+    }
+    .welcome-text {
+        text-align: center;
+        color: white;
+    }
+    #loading_status {
+        color: yellow;
+        margin-bottom: 1;
     }
     #dialog {
         padding: 1 2;
@@ -422,42 +650,90 @@ class AciTreeViewerApp(App):
     }
     """
 
+    VIEW_CLASSES = {
+        'network': [
+            'fvTenant', 'fvCtx', 'fvBD', 'fvAEPg', 'fvSubnet',
+            'l3extOut', 'l3extInstP', 'l3extSubnet',
+            'fvRsCtx', 'fvRsBd', 'l3extRsEctx',
+            'vzAny', 'vzRsAnyToProv', 'vzRsAnyToCons',
+            'ipRouteP', 'ipNexthopP', 'healthInst', 'faultInst',
+            'vnsRsAbsGraphAtt', 'fvRsProv', 'fvRsCons', 'l3extRsProv', 'l3extRsCons', 'vzBrCP', 'vzSubj', 'l3extLNodeP', 'l3extRsNodeL3OutAtt'
+        ],
+        'contract': [
+            'fvTenant', 'fvAEPg', 'l3extInstP',
+            'fvRsProv', 'fvRsCons', 'l3extRsProv', 'l3extRsCons',
+            'vzBrCP', 'vzSubj', 'vzAny', 'vzRsAnyToProv', 'vzRsAnyToCons',
+            'healthInst', 'faultInst', 'fvSubnet', 'l3extSubnet', 'ipRouteP', 'fvRsBd', 'fvRsCtx', 'l3extRsEctx'
+        ],
+        'port': [
+            'fabricNode', 'fabricVpcRT', 'fvRsPathAtt',
+            'l3extRsPathL3OutAtt', 'lldpAdjEp', 'vnsRsCIfPathAtt',
+            'fvTenant', 'fvAEPg', 'l3extInstP'
+        ]
+    }
+
     def __init__(self, viewer, tenant_filter):
         super().__init__()
         self.viewer = viewer
         self.tenant_filter = tenant_filter
-        self.views = ['network', 'application']
+        self.views = ['network', 'contract', 'port', 'help']
         self.current_view = 'network'
         self.data = {}
         self.maps = {}
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Container(id="main-container"):
+        yield Tabs(
+            Tab("Network", id="network"),
+            Tab("Contract", id="contract"),
+            Tab("Port", id="port"),
+            Tab("Help", id="help"),
+        )
+        with Container(id="tree-pane"):
             yield TextualTree("ACI Topology", id="tree")
-            yield Static("Select an object to see details.", id="details-pane")
         yield Footer()
 
     def on_mount(self) -> None:
-        """Called when app starts, builds the tree."""
-        self.build_tree()
+        """Called when app starts."""
+        self.sub_title = "Welcome - Select a view"
+        self.push_screen(WelcomeScreen())
+        self.query_one(Tabs).focus()
+        self.run_worker(self.load_initial_data, thread=True)
+
+    def load_initial_data(self):
+        self.screen.post_message(StatusUpdate("Fetching data from APIC..."))
+        self.data = self.viewer._fetch_all_data()
+        
+        self.screen.post_message(StatusUpdate("Processing data..."))
+        self.maps = self.viewer._process_mappings(self.data)
+        
+        self.screen.post_message(StatusUpdate("Data Loaded! Ready.", "green"))
+        self.screen.post_message(LoadingComplete())
+        self.call_from_thread(self.build_tree)
 
     def build_tree(self) -> None:
         """Fetches data and dispatches to the correct tree builder."""
-        view_map = {'network': 'Network', 'application': 'App'}
+        view_map = {'network': 'Network', 'contract': 'Contract', 'port': 'Port'}
+        
+        if not self.data or not self.maps:
+            self.sub_title = f"Loading {view_map.get(self.current_view, 'Unknown')} data..."
+            return
+
         filter_status = ""
         if self.tenant_filter:
             filter_status = f" | Filter: {self.tenant_filter}"
 
         self.sub_title = f"View: {view_map.get(self.current_view, 'Unknown')}{filter_status} | Last updated: {datetime.now().strftime('%H:%M:%S')}"
         
-        self.data = self.viewer._fetch_all_data()
-        self.maps = self.viewer._process_mappings(self.data)
-
+        # Data is already loaded by load_initial_data or refresh
+        # Just build the tree using cached data
+        
         if self.current_view == 'network':
             self._build_network_tree()
-        elif self.current_view == 'application':
-            self._build_app_tree()
+        elif self.current_view == 'contract':
+            self._build_contract_tree()
+        elif self.current_view == 'port':
+            self._build_port_tree()
 
     def _build_network_tree(self) -> None:
         """Fetches data and builds/refreshes the tree view, preserving state."""
@@ -676,16 +952,17 @@ class AciTreeViewerApp(App):
 
         tree.focus()
 
-    def _build_app_tree(self) -> None:
-        """Builds the application-centric tree view."""
+    def _build_contract_tree(self) -> None:
+        """Builds the contract-centric tree view."""
         tree = self.query_one("#tree", TextualTree)
         tree.clear()
-        tree.root.set_label("[bold blue]ACI Tree Viewer - App View[/bold blue]")
+        tree.root.set_label("[bold blue]ACI Tree Viewer - Contract View[/bold blue]")
 
         maps = self.maps
         app_map = maps['app_centric_map']
         health_map = maps['health_map']
         fault_map = maps['fault_map']
+        epg_to_bd = maps['epg_to_bd']
 
         tenant_map = defaultdict(list)
         for (tenant, contract), epgs in app_map.items():
@@ -695,43 +972,237 @@ class AciTreeViewerApp(App):
         if self.tenant_filter:
             tenants_to_display = [t for t in tenants_to_display if t == self.tenant_filter]
 
+        def get_network_info(dn):
+            """Returns a list of network info (Subnets/Routes) for an EPG or L3Out."""
+            info = []
+            # 1. EPG Case
+            if '/epg-' in dn:
+                bd_dn = epg_to_bd.get(dn)
+                if bd_dn:
+                    subnets = sorted(maps['bd_subnets'].get(bd_dn, []))
+                    bd_name = bd_dn.split('/bd-')[-1]
+                    for sub in subnets:
+                        info.append(f"[yellow]{sub}[/yellow] (BD: {bd_name})")
+            # 2. L3Out Case
+            elif '/instP-' in dn:
+                # External Subnets
+                for sub in sorted(maps['instp_subnets'].get(dn, []), key=lambda s: s['ip']):
+                    info.append(f"[yellow]{sub['ip']}[/yellow] (Ext EPG Subnet)")
+                # Static Routes (Associated with the L3Out of this InstP)
+                l3out_dn = dn.split('/instP-')[0]
+                for route in sorted(maps['l3out_static_routes'].get(l3out_dn, []), key=lambda r: r['prefix']):
+                    node_info = f" [dim](Node: {route['node']})[/dim]" if route.get('node') else ""
+                    info.append(f"[yellow]{route['prefix']}[/yellow] (Static Route){node_info}")
+            # 3. vzAny Case
+            elif dn.endswith('/any'):
+                info.append("[dim]Applies to all EPGs in VRF[/dim]")
+            return info
+
+        def get_vrf_info(dn):
+            """Returns (Tenant, VRF Name) for an EPG or L3Out."""
+            # EPG -> BD -> VRF
+            if '/epg-' in dn:
+                bd_dn = epg_to_bd.get(dn)
+                if bd_dn:
+                    vrf_name = maps['bd_to_vrf'].get(bd_dn, "Unknown VRF")
+                    # BD DN: uni/tn-X/BD-Y -> Tenant is X
+                    tenant_match = re.match(r'uni/tn-([^/]+)', bd_dn)
+                    tenant_name = tenant_match.group(1) if tenant_match else "Unknown"
+                    return tenant_name, vrf_name
+            # L3Out -> VRF
+            elif '/instP-' in dn:
+                l3out_dn = dn.split('/instP-')[0]
+                vrf_name = maps['l3_to_vrf'].get(l3out_dn, "Unknown VRF")
+                tenant_match = re.match(r'uni/tn-([^/]+)', l3out_dn)
+                tenant_name = tenant_match.group(1) if tenant_match else "Unknown"
+                return tenant_name, vrf_name
+            # vzAny -> VRF
+            elif dn.endswith('/any'):
+                tenant_match = re.match(r'uni/tn-([^/]+)', dn)
+                vrf_match = re.search(r'/ctx-([^/]+)/', dn)
+                tenant_name = tenant_match.group(1) if tenant_match else "Unknown"
+                vrf_name = vrf_match.group(1) if vrf_match else "Unknown"
+                return tenant_name, vrf_name
+            
+            return "Unknown", "Unknown"
+
         for tenant in tenants_to_display:
             t_dn = f"uni/tn-{tenant}"
             health_status = self.viewer._format_health_status(t_dn, health_map, fault_map)
-            t_node = tree.root.add(f"[bold]Tenant:[/bold] {tenant}{health_status}")
+            t_node = tree.root.add(
+                f"[bold]Tenant:[/bold] {tenant}{health_status}",
+                expand=False
+            )
+            
             contracts = sorted(tenant_map[tenant], key=lambda x: x[0])
             if not contracts: t_node.add_leaf("No contract relationships found.")
 
             for contract, epgs in contracts:
-                direction = maps['contract_info'].get((tenant, contract), 'Bi')
-                contract_dn = f"uni/tn-{tenant}/brc-{contract}"
-                c_node = t_node.add(f"Contract: [cyan]{contract}[/cyan] ({direction})", data=contract_dn)
-                
-                prov_node_dn = f"{contract_dn}/providers"
-                prov_node = c_node.add(f"[green]Providers[/green] ({len(epgs['prov'])})", data=prov_node_dn)
-                if epgs['prov']:
-                    for epg_name, epg_dn in sorted(list(epgs['prov'])):
-                        health_status = self.viewer._format_health_status(epg_dn, health_map, fault_map)
-                        prov_node.add_leaf(f"EPG: {epg_name}{health_status}", data=epg_dn)
-                else: prov_node.add_leaf("[dim]None[/dim]")
+                # Determine Source and Scope
+                scope = maps['contract_scopes'].get((tenant, contract))
+                source_tenant = tenant
+                if not scope:
+                    scope = maps['contract_scopes'].get(('common', contract))
+                    if scope: source_tenant = 'common'
+                    else: scope = 'unknown'
 
+                direction = maps['contract_info'].get((tenant, contract), 'Bi')
+                
+                contract_type = "Local Contract" if source_tenant == tenant else "Remote Contract"
+                source_info = ""
+                if source_tenant != tenant:
+                    source_info = f", Source: [bold magenta]{source_tenant}[/bold magenta]"
+                
+                label = f"Contract: [cyan]{contract}[/cyan] ({direction}, {contract_type}, Scope: {scope}{source_info})"
+                contract_dn = f"uni/tn-{source_tenant}/brc-{contract}"
+                c_node = t_node.add(label, data=contract_dn)
+
+                # Providers Section
+                prov_node_dn = f"{contract_dn}/providers"
+                all_provs = maps['contract_providers'].get((source_tenant, contract), set())
+                prov_node = c_node.add(f"[green]Providers[/green] ({len(all_provs)})", data=prov_node_dn)
+                
+                if not all_provs:
+                    prov_node.add_leaf("[dim]No Providers Configured[/dim]")
+                else:
+                    prov_groups = defaultdict(list)
+                    for p_tenant, p_epg, p_dn in all_provs:
+                        _, p_vrf = get_vrf_info(p_dn)
+                        prov_groups[(p_tenant, p_vrf)].append((p_epg, p_dn))
+                    
+                    for (p_tenant, p_vrf), providers in sorted(prov_groups.items()):
+                        loc_str = " [bold magenta](Local)[/bold magenta]" if p_tenant == tenant else ""
+                        group_node = prov_node.add(f"[bold]Tenant:[/bold] {p_tenant}{loc_str} -> [bold]VRF:[/bold] {p_vrf}")
+                        for epg_name, epg_dn in sorted(providers):
+                            health_status = self.viewer._format_health_status(epg_dn, health_map, fault_map)
+                            epg_node = group_node.add(f"EPG: {epg_name}{health_status}", data=epg_dn)
+                            
+                            net_info = get_network_info(epg_dn)
+                            for info in net_info:
+                                epg_node.add_leaf(f"Network: {info}")
+
+                # Consumers Section (Grouped by Tenant -> VRF)
                 cons_node_dn = f"{contract_dn}/consumers"
                 cons_node = c_node.add(f"[yellow]Consumers[/yellow] ({len(epgs['cons'])})", data=cons_node_dn)
                 if epgs['cons']:
+                    # Group consumers by (Tenant, VRF)
+                    cons_groups = defaultdict(list)
                     for epg_name, epg_dn in sorted(list(epgs['cons'])):
-                        health_status = self.viewer._format_health_status(epg_dn, health_map, fault_map)
-                        cons_node.add_leaf(f"EPG: {epg_name}{health_status}", data=epg_dn)
+                        c_tenant, c_vrf = get_vrf_info(epg_dn)
+                        cons_groups[(c_tenant, c_vrf)].append((epg_name, epg_dn))
+
+                    for (c_tenant, c_vrf), consumers in sorted(cons_groups.items()):
+                        group_node = cons_node.add(f"[bold]Tenant:[/bold] {c_tenant} -> [bold]VRF:[/bold] {c_vrf}")
+                        for epg_name, epg_dn in consumers:
+                            health_status = self.viewer._format_health_status(epg_dn, health_map, fault_map)
+                            epg_node = group_node.add(f"EPG: {epg_name}{health_status}", data=epg_dn)
+                            
+                            # Network Info
+                            net_info = get_network_info(epg_dn)
+                            for info in net_info:
+                                epg_node.add_leaf(f"Network: {info}")
+
                 else: cons_node.add_leaf("[dim]None[/dim]")
+        tree.focus()
+
+    def _build_port_tree(self) -> None:
+        """Builds the port-centric tree view."""
+        tree = self.query_one("#tree", TextualTree)
+        tree.clear()
+        tree.root.set_label("[bold blue]ACI Tree Viewer - Port View[/bold blue]")
+
+        maps = self.maps
+        data = self.data
+        port_map = maps.get('port_details_map', {})
+        vpc_pairs = maps.get('vpc_pairs', {})
+        
+        nodes = sorted(data.get('fabricNode', []), key=lambda x: int(x['fabricNode']['attributes']['id']))
+        node_id_to_name = {n['fabricNode']['attributes']['id']: n['fabricNode']['attributes']['name'] for n in nodes}
+
+        if not nodes:
+            tree.root.add_leaf("No fabric nodes found.")
+            return
+
+        processed_nodes = set()
+
+        def natural_sort_key(s):
+            return [int(text) if text.isdigit() else text.lower() for text in re.split(r'(\d+)', s)]
+
+        def build_node_ports(parent_node, node_id):
+            if node_id in port_map:
+                for port, vlans in sorted(port_map[node_id].items(), key=lambda x: natural_sort_key(x[0])):
+                    port_node = parent_node.add(f"Port: [cyan]{port}[/cyan]")
+                    for vlan, epgs in sorted(vlans.items()):
+                        # Handle Neighbors
+                        if vlan == '-neighbor':
+                            for item in epgs:
+                                port_node.add_leaf(f"Neighbor: [bold green]{item['name']}[/bold green] (Remote: {item.get('remote', 'N/A')})")
+                            continue
+
+                        if vlan == 'untagged':
+                            target_node = port_node
+                        else:
+                            target_node = port_node.add(f"VLAN: [yellow]{vlan}[/yellow]")
+                        
+                        for item in epgs:
+                            if item['type'] == 'EPG':
+                                target_node.add_leaf(f"EPG: {item['name']}")
+                            elif item['type'] == 'L3Out':
+                                target_node.add_leaf(f"L3Out: [bold blue]{item['name']}[/bold blue]")
+                            elif item['type'] == 'Service':
+                                target_node.add_leaf(f"Service Device: [magenta]{item['name']}[/magenta]")
+            else:
+                parent_node.add_leaf("[dim]No port assignments found[/dim]")
+
+        for node_obj in nodes:
+            node_attr = node_obj['fabricNode']['attributes']
+            node_id = node_attr['id']
+            node_name = node_attr.get('name', 'Unknown')
+            if node_id in processed_nodes:
+                continue
+
+            if node_id in vpc_pairs:
+                peer_id = vpc_pairs[node_id]
+                peer_name = node_id_to_name.get(peer_id, 'Unknown')
+                pair_node = tree.root.add(f"[bold]vPC Pair: Node {node_id} ({node_name}) - Node {peer_id} ({peer_name})[/bold]")
+                processed_nodes.add(node_id)
+                processed_nodes.add(peer_id)
+
+                node1_branch = pair_node.add(f"Node {node_id} ({node_name})")
+                build_node_ports(node1_branch, node_id)
+
+                node2_branch = pair_node.add(f"Node {peer_id} ({peer_name})")
+                build_node_ports(node2_branch, peer_id)
+            else:
+                standalone_node = tree.root.add(f"[bold]Node: {node_id} ({node_name})[/bold]")
+                build_node_ports(standalone_node, node_id)
+                processed_nodes.add(node_id)
+
         tree.focus()
         
     def action_refresh(self) -> None:
         """Refresh the tree view data."""
-        self.build_tree()
+        classes = self.VIEW_CLASSES.get(self.current_view)
+        self.run_worker(lambda: self.refresh_view_data(classes), thread=True)
 
-    def action_toggle_view(self) -> None:
-        """Toggle between network and application-centric views."""
-        self.current_view = 'application' if self.current_view == 'network' else 'network'
+    def refresh_view_data(self, classes):
+        self.call_from_thread(lambda: setattr(self, 'sub_title', "Refreshing data..."))
+        new_data = self.viewer._fetch_all_data(classes)
+        self.data.update(new_data)
+        self.maps = self.viewer._process_mappings(self.data)
+        self.call_from_thread(self.build_tree)
+
+    def on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None:
+        """Handle tab switching."""
+        if event.tab.id == 'help':
+            self.push_screen(WelcomeScreen(is_help_view=True))
+            return
+
+        self.current_view = event.tab.id
+        # If data is not loaded yet, this will trigger the first load.
+        # Otherwise, it will use cached data.
         self.build_tree()
+        self.query_one(Tabs).focus() # Keep focus on tabs
         
     def action_quit(self) -> None:
         """Show the quit dialog."""
@@ -740,6 +1211,9 @@ class AciTreeViewerApp(App):
     def on_key(self, event: Key) -> None:
         """Handle key presses for the TUI."""
         tree = self.query_one("#tree", TextualTree)
+        if not tree.has_focus:
+            return
+
         if not tree.cursor_node:
             return
         
@@ -758,26 +1232,9 @@ class AciTreeViewerApp(App):
         elif event.key == "left":
             node.collapse()
             event.prevent_default()
-
-        elif event.key == "enter":
-            details_pane = self.query_one("#details-pane", Static)
-            node_data = node.data
-
-            if not node_data:
-                details_pane.update("Select an object to see details.")
-                return
-
-            dn_to_full_obj = self.maps.get('dn_to_full_obj', {})
-            obj_details = dn_to_full_obj.get(node_data)
-
-            if obj_details:
-                api_request_info = f"[bold green]GET[/bold green] /api/mo/{node_data}.json"
-                formatted_details = [api_request_info, ""]
-                for key, value in sorted(obj_details.items()):
-                    formatted_details.append(f"[bold cyan]{key}:[/bold cyan] {value}")
-                details_pane.update("\n".join(formatted_details))
-            else:
-                details_pane.update(f"No detailed attributes for this item.\n\nDN: {node_data}")
+        
+        elif event.key == "space":
+            node.toggle()
             event.prevent_default()
 
 if __name__ == "__main__":
@@ -794,10 +1251,12 @@ if __name__ == "__main__":
         print("[!] Please create it with an [ACI] section containing URL, USER, and PASSWORD.")
         exit()
 
+    viewer = None
     try:
         aci_url = config.get('ACI', 'URL')
         aci_user = config.get('ACI', 'USER')
         aci_password = config.get('ACI', 'PASSWORD')
+        viewer = AciTreeViewer(aci_url, aci_user, aci_password)
     except (configparser.NoSectionError, configparser.NoOptionError) as e:
         print(f"[!] Error in configuration file: {e}")
         exit()
