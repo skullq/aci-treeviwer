@@ -1,0 +1,228 @@
+# Tenant Network View
+
+- Tenant: mgmt (Health Check: 100, Faults: 0)
+  - VRF: oob (VNID: 2457600, pcTag: 49153) (Health Check: N/A, Faults: 0)
+    - Internal Network & Security
+      - No BDs found.
+    - External Connectivity (L3Out)
+      - No L3Outs found.
+  - VRF: inb (VNID: 3112960, pcTag: 49153) (Health Check: N/A, Faults: 0)
+    - Internal Network & Security
+      - BD: inb (pcTag: 16386) (Health Check: N/A, Faults: 0)
+        - EPG: ND_TEST_EPG (pcTag: 32771) (Health Check: N/A, Faults: 0)
+          - Provides: ALL_common (Bi)
+      - BD: INB_TEST (pcTag: 16387) (Health Check: N/A, Faults: 0)
+        - No EPGs found.
+    - External Connectivity (L3Out)
+      - L3Out: L3_INB (Health Check: N/A, Faults: 0)
+        - Advertised: 192.168.100.254/24, 0.0.0.0/0 (pcTag:15)
+        - Static Routes
+          - Node 301 (vPC Peer: 302)
+            - 0.0.0.0/0 via 192.168.27.2
+        - External EPG: L3_EPG_INB (pcTag: 49158) (Health Check: N/A, Faults: 0)
+          - Subnet: 0.0.0.0/0 (pcTag: N/A, Scope: External EPG)
+          - Provides: ALL_common (Bi)
+          - Consumes: ALL_common (Bi)
+- Tenant: infra (Health Check: 88, Faults: 0)
+  - VRF: overlay-1 (VNID: 16777199, pcTag: 16386) (Health Check: N/A, Faults: 0)
+    - Internal Network & Security
+      - BD: default (pcTag: 49153) (Health Check: N/A, Faults: 0)
+        - EPG: default (pcTag: 49154) (Health Check: 88, Faults: 0)
+    - External Connectivity (L3Out)
+      - No L3Outs found.
+  - VRF: ave-ctrl (VNID: 2162688, pcTag: 16386) (Health Check: N/A, Faults: 0)
+    - Internal Network & Security
+      - BD: ave-ctrl (pcTag: 32770) (Health Check: N/A, Faults: 0)
+        - EPG: ave-ctrl (pcTag: 49153) (Health Check: N/A, Faults: 0)
+    - External Connectivity (L3Out)
+      - No L3Outs found.
+- Tenant: common (Health Check: N/A, Faults: 0)
+  - VRF: copy (VNID: 3112961, pcTag: 32770) (Health Check: N/A, Faults: 0)
+    - Internal Network & Security
+      - No BDs found.
+    - External Connectivity (L3Out)
+      - No L3Outs found.
+  - VRF: default (VNID: 2883584, pcTag: 16386) (Health Check: N/A, Faults: 0)
+    - Internal Network & Security
+      - No BDs found.
+    - External Connectivity (L3Out)
+      - No L3Outs found.
+  - VRF: V1 (VNID: 2228224, pcTag: 16386) (Health Check: N/A, Faults: 0)
+    - Internal Network & Security
+      - No BDs found.
+    - External Connectivity (L3Out)
+      - L3Out: L3out_Common (Health Check: N/A, Faults: 0)
+        - Advertised: 172.16.1.254/24, 172.16.2.254/24
+        - Static Routes
+          - Node 301 (vPC Peer: 302)
+            - 20.1.1.1/32 via 10.1.12.254
+          - Node 302 (vPC Peer: 301)
+            - 20.1.1.1/32 via 10.1.12.254
+        - External EPG: L3out_Common (pcTag: 21) (Health Check: N/A, Faults: 0)
+          - Subnet: 20.1.1.1/32 (pcTag: N/A, Scope: External EPG, Shared Route Control, Shared Security)
+          - Provides: Common_Mang (Bi)
+          - Provides: Common_WEB_TO_Mang (Bi)
+- Tenant: T1 (Health Check: 100, Faults: 0)
+  - VRF: V1 (VNID: 2818048, pcTag: 32770) (Health Check: N/A, Faults: 0)
+    - vzAny (VRF Contracts)
+      - Provides: T1_L4-1_Ser1_PBR_Vzany (Bi)
+      - Provides: L3out1 (Bi)
+      - Consumes: Shared_Contract (Bi)
+      - Consumes: L3out_SSL (Bi)
+    - Internal Network & Security
+      - BD: 172_16_1_0 (pcTag: 49153) (Health Check: N/A, Faults: 0)
+        - EPG: T1_V1_E1 (pcTag: 16389) (Health Check: 100, Faults: 0)
+      - BD: 172_16_2_0 (pcTag: 49160) (Health Check: N/A, Faults: 0)
+        - EPG: T1_V2_E2 (pcTag: 16390) (Health Check: 100, Faults: 0)
+    - External Connectivity (L3Out)
+      - L3Out: L3out1_T1_V1 (Health Check: N/A, Faults: 0)
+        - Advertised: 172.16.1.254/24, 172.16.2.254/24, 0.0.0.0/0 (pcTag:15)
+        - Static Routes
+          - Node 301 (vPC Peer: 302)
+            - 0.0.0.0/0 via 10.1.1.4
+          - Node 302 (vPC Peer: 301)
+            - 0.0.0.0/0 via 10.1.1.4
+        - External EPG: L3out1_T1_V1_EPG (pcTag: 49162) (Health Check: N/A, Faults: 0)
+          - Subnet: 0.0.0.0/0 (pcTag: N/A, Scope: External EPG)
+          - Consumes: L3out1 (Bi)
+          - Consumes: T1_L4-1_Ser1_PBR_Vzany (Bi)
+  - VRF: V2 (VNID: 3047424, pcTag: 32770) (Health Check: N/A, Faults: 0)
+    - vzAny (VRF Contracts)
+      - Provides: L3out1 (Bi)
+      - Consumes: Shared_Contract (Bi)
+      - Consumes: L3out_SSL (Bi)
+    - Internal Network & Security
+      - No BDs found.
+    - External Connectivity (L3Out)
+      - L3Out: L3out2_T1_V2 (Health Check: N/A, Faults: 0)
+        - Advertised: 0.0.0.0/0 (pcTag:15)
+        - Static Routes
+          - Node 301 (vPC Peer: 302)
+            - 0.0.0.0/0 via 10.1.2.4
+          - Node 302 (vPC Peer: 301)
+            - 0.0.0.0/0 via 10.1.2.4
+        - External EPG: L3out2_T1_V2_EPG (pcTag: 32774) (Health Check: N/A, Faults: 0)
+          - Subnet: 0.0.0.0/0 (pcTag: N/A, Scope: External EPG)
+          - Provides: L3out1 (Bi)
+          - Consumes: L3out1 (Bi)
+  - VRF: Shared_VRF (VNID: 2949120, pcTag: 49153) (Health Check: N/A, Faults: 0)
+    - Internal Network & Security
+      - No BDs found.
+    - External Connectivity (L3Out)
+      - L3Out: L3out_Shared (Health Check: N/A, Faults: 0)
+        - Advertised: Private Only
+        - Static Routes
+          - Node 301 (vPC Peer: 302)
+            - 20.1.1.1/32 via 10.1.11.254
+          - Node 302 (vPC Peer: 301)
+            - 20.1.1.1/32 via 10.1.11.254
+        - External EPG: L3out_Shared_EPG (pcTag: 10932) (Health Check: N/A, Faults: 0)
+          - Subnet: 20.1.1.1/32 (pcTag: N/A, Scope: External EPG, Shared Route Control, Shared Security)
+          - Provides: Shared_Contract (Bi)
+- Tenant: T2 (Health Check: 66, Faults: 0)
+  - VRF: T2_V1 (VNID: 2883585, pcTag: 49153) (Health Check: N/A, Faults: 0)
+    - Internal Network & Security
+      - BD: 172_16_3_0 (pcTag: 32773) (Health Check: N/A, Faults: 0)
+        - EPG: T2_V1_E1 (pcTag: 32775) (Health Check: 66, Faults: 0)
+          - Provides: EPG1_TO_L3out_FW (Bi)
+          - Consumes: Common_Mang (Bi)
+    - External Connectivity (L3Out)
+      - L3Out: L3out_T2_FW (Health Check: N/A, Faults: 0)
+        - Advertised: 172.16.3.254/24, 0.0.0.0/0 (pcTag:15)
+        - Static Routes
+          - Node 301 (vPC Peer: 302)
+            - 0.0.0.0/0 via 10.1.8.5
+          - Node 302 (vPC Peer: 301)
+            - 0.0.0.0/0 via 10.1.8.5
+        - External EPG: L3out_T2_FW_EPG (pcTag: 32776) (Health Check: N/A, Faults: 0)
+          - Subnet: 0.0.0.0/0 (pcTag: N/A, Scope: External EPG)
+          - Consumes: EPG1_TO_L3out_FW (Bi)
+  - VRF: Shared_VRF (VNID: 2457601, pcTag: 49153) (Health Check: N/A, Faults: 0)
+    - Internal Network & Security
+      - No BDs found.
+    - External Connectivity (L3Out)
+      - L3Out: L3out_T2 (Health Check: N/A, Faults: 0)
+        - Advertised: 0.0.0.0/0 (pcTag:15)
+        - Static Routes
+          - Node 301 (vPC Peer: 302)
+            - 0.0.0.0/0 via 10.1.3.4
+          - Node 302 (vPC Peer: 301)
+            - 0.0.0.0/0 via 10.1.3.4
+        - External EPG: L3out_T2_EPG (pcTag: 32774) (Health Check: N/A, Faults: 0)
+          - Subnet: 0.0.0.0/0 (pcTag: N/A, Scope: External EPG)
+          - Subnet: 10.1.3.0/24 (pcTag: N/A, Scope: External EPG, Shared Route Control, Shared Security)
+          - Consumes: L3out_T2 (Bi)
+        - External EPG: L3out_T2_Shared (pcTag: 5476) (Health Check: N/A, Faults: 0)
+          - Subnet: 10.1.7.0/24 (pcTag: N/A, Scope: External EPG, Shared Route Control, Shared Security)
+          - Subnet: 172.16.3.0/24 (pcTag: N/A, Scope: External EPG, Shared Route Control, Shared Security)
+          - Provides: L3out_T2 (Bi)
+          - Provides: WEB_TO_DUR_WAS (Bi)
+        - External EPG: L3out_T2_FW_EPG (pcTag: 32776) (Health Check: N/A, Faults: 0)
+          - Subnet: 0.0.0.0/0 (pcTag: N/A, Scope: External EPG)
+          - Consumes: EPG1_TO_L3out_FW (Bi)
+      - L3Out: L3out_T2_Shared (Health Check: N/A, Faults: 0)
+        - Advertised: Private Only
+        - Static Routes
+          - Node 301 (vPC Peer: 302)
+            - 10.1.7.0/24 via 10.1.7.5
+            - 172.16.3.0/24 via 10.1.7.5
+          - Node 302 (vPC Peer: 301)
+            - 10.1.7.0/24 via 10.1.7.5
+            - 172.16.3.0/24 via 10.1.7.5
+        - External EPG: L3out_T2_Shared (pcTag: 5476) (Health Check: N/A, Faults: 0)
+          - Subnet: 10.1.7.0/24 (pcTag: N/A, Scope: External EPG, Shared Route Control, Shared Security)
+          - Subnet: 172.16.3.0/24 (pcTag: N/A, Scope: External EPG, Shared Route Control, Shared Security)
+          - Provides: L3out_T2 (Bi)
+          - Provides: WEB_TO_DUR_WAS (Bi)
+- Tenant: T3 (Health Check: 66, Faults: 0)
+  - VRF: Shared_VRF (VNID: 2818049, pcTag: 49153) (Health Check: N/A, Faults: 0)
+    - Internal Network & Security
+      - No BDs found.
+    - External Connectivity (L3Out)
+      - L3Out: L3out_T3_Mang (Health Check: N/A, Faults: 0)
+        - Advertised: 0.0.0.0/0 (pcTag:15)
+        - Static Routes
+          - Node 301 (vPC Peer: 302)
+            - 0.0.0.0/0 via 10.1.4.4
+            - 10.1.4.0/24 via 10.1.4.4
+            - 192.168.0.0/24 via 10.1.4.4
+          - Node 302 (vPC Peer: 301)
+            - 0.0.0.0/0 via 10.1.4.4
+            - 10.1.4.0/24 via 10.1.4.4
+            - 192.168.0.0/24 via 10.1.4.4
+        - External EPG: L3out_T3_Mang_EPG (pcTag: 5475) (Health Check: N/A, Faults: 0)
+          - Subnet: 0.0.0.0/0 (pcTag: N/A, Scope: External EPG)
+          - Subnet: 10.1.4.0/24 (pcTag: N/A, Scope: External EPG, Shared Route Control, Shared Security)
+          - Subnet: 192.168.0.0/24 (pcTag: N/A, Scope: External EPG, Shared Route Control, Shared Security)
+          - Consumes: Shared_Mang (Bi)
+          - Consumes: WEB_TO_DUR_WAS (Bi)
+          - Consumes: Common_WEB_TO_Mang (Bi)
+      - L3Out: L3out_T3_Shared (Health Check: N/A, Faults: 0)
+        - Advertised: Private Only
+        - Static Routes
+          - Node 301 (vPC Peer: 302)
+            - 10.1.6.0/24 via 10.1.5.4
+            - 172.16.4.0/24 via 10.1.5.4
+          - Node 302 (vPC Peer: 301)
+            - 10.1.6.0/24 via 10.1.5.4
+            - 172.16.4.0/24 via 10.1.5.4
+        - External EPG: L3out_T3_Shared_EPG (pcTag: 16388) (Health Check: N/A, Faults: 0)
+          - Subnet: 172.16.4.0/24 (pcTag: N/A, Scope: External EPG, Shared Route Control, Shared Security)
+          - Provides: Shared_Mang (Bi)
+  - VRF: T3_FW (VNID: 2359296, pcTag: 16386) (Health Check: N/A, Faults: 0)
+    - Internal Network & Security
+      - BD: 172_16_4_0 (pcTag: 16388) (Health Check: N/A, Faults: 0)
+        - EPG: T3_V1_E1 (pcTag: 49156) (Health Check: 66, Faults: 0)
+          - Provides: L3out_T3 (Bi)
+          - Consumes: Common_Mang (Bi)
+    - External Connectivity (L3Out)
+      - L3Out: L3out_T3_FW (Health Check: N/A, Faults: 0)
+        - Advertised: 172.16.4.254/24, 0.0.0.0/0 (pcTag:15)
+        - Static Routes
+          - Node 301 (vPC Peer: 302)
+            - 0.0.0.0/0 via 10.1.6.4
+          - Node 302 (vPC Peer: 301)
+            - 0.0.0.0/0 via 10.1.6.4
+        - External EPG: L3out_T3_FW_EPG (pcTag: 16389) (Health Check: N/A, Faults: 0)
+          - Subnet: 0.0.0.0/0 (pcTag: N/A, Scope: External EPG)
+          - Consumes: L3out_T3 (Bi)

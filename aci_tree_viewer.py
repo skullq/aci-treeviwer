@@ -1326,9 +1326,8 @@ class AciTreeViewerApp(App):
 
         for tenant in tenants_to_display:
             t_dn = f"uni/tn-{tenant}"
-            health_status = self.viewer._format_health_status(t_dn, health_map, fault_map)
             t_node = tree.root.add(
-                f"[bold]Tenant:[/bold] {tenant}{health_status}",
+                f"[bold]Tenant:[/bold] {tenant}",
                 data=t_dn,
                 expand=has_state and (self._get_key(t_dn) in expanded_nodes)
             )
@@ -1383,9 +1382,8 @@ class AciTreeViewerApp(App):
                         group_node = prov_node.add(f"[bold]Tenant:[/bold] {p_tenant}{loc_str} -> [bold]VRF:[/bold] {p_vrf}", data=group_dn, expand=has_state and (self._get_key(group_dn) in expanded_nodes))
                         data_to_node_map[group_dn] = group_node
                         for epg_name, epg_dn in sorted(providers):
-                            health_status = self.viewer._format_health_status(epg_dn, health_map, fault_map)
                             label_name = f"[bold red]{epg_name}[/bold red]" if epg_dn.endswith('/any') else epg_name
-                            epg_node = group_node.add(f"EPG: {label_name}{health_status}", data=epg_dn, expand=has_state and (self._get_key(epg_dn) in expanded_nodes))
+                            epg_node = group_node.add(f"EPG: {label_name}", data=epg_dn, expand=has_state and (self._get_key(epg_dn) in expanded_nodes))
                             data_to_node_map[epg_dn] = epg_node
                             
                             if epg_dn.endswith('/any'):
@@ -1426,9 +1424,8 @@ class AciTreeViewerApp(App):
                         group_node = cons_node.add(f"[bold]Tenant:[/bold] {c_tenant}{loc_str} -> [bold]VRF:[/bold] {c_vrf}", data=group_dn, expand=has_state and (self._get_key(group_dn) in expanded_nodes))
                         data_to_node_map[group_dn] = group_node
                         for epg_name, epg_dn in consumers:
-                            health_status = self.viewer._format_health_status(epg_dn, health_map, fault_map)
                             label_name = f"[bold red]{epg_name}[/bold red]" if epg_dn.endswith('/any') else epg_name
-                            epg_node = group_node.add(f"EPG: {label_name}{health_status}", data=epg_dn, expand=has_state and (self._get_key(epg_dn) in expanded_nodes))
+                            epg_node = group_node.add(f"EPG: {label_name}", data=epg_dn, expand=has_state and (self._get_key(epg_dn) in expanded_nodes))
                             data_to_node_map[epg_dn] = epg_node
                             
                             if epg_dn.endswith('/any'):
@@ -1561,9 +1558,8 @@ class AciTreeViewerApp(App):
                     group_node = prov_node.add(f"[bold]Tenant:[/bold] {p_tenant} -> [bold]VRF:[/bold] {p_vrf}", data=group_dn, expand=has_state and (self._get_key(group_dn) in expanded_nodes))
                     data_to_node_map[group_dn] = group_node
                     for epg_name, epg_dn in sorted(providers):
-                        health_status = self.viewer._format_health_status(epg_dn, health_map, fault_map)
                         label_name = f"[bold red]{epg_name}[/bold red]" if epg_dn.endswith('/any') else epg_name
-                        epg_node = group_node.add(f"EPG: {label_name}{health_status}", data=epg_dn, expand=has_state and (self._get_key(epg_dn) in expanded_nodes))
+                        epg_node = group_node.add(f"EPG: {label_name}", data=epg_dn, expand=has_state and (self._get_key(epg_dn) in expanded_nodes))
                         data_to_node_map[epg_dn] = epg_node
                         
                         if epg_dn.endswith('/any'):
@@ -1601,9 +1597,8 @@ class AciTreeViewerApp(App):
                     group_node = cons_node.add(f"[bold]Tenant:[/bold] {c_tenant} -> [bold]VRF:[/bold] {c_vrf}", data=group_dn, expand=has_state and (self._get_key(group_dn) in expanded_nodes))
                     data_to_node_map[group_dn] = group_node
                     for epg_name, epg_dn in sorted(consumers):
-                        health_status = self.viewer._format_health_status(epg_dn, health_map, fault_map)
                         label_name = f"[bold red]{epg_name}[/bold red]" if epg_dn.endswith('/any') else epg_name
-                        epg_node = group_node.add(f"EPG: {label_name}{health_status}", data=epg_dn, expand=has_state and (self._get_key(epg_dn) in expanded_nodes))
+                        epg_node = group_node.add(f"EPG: {label_name}", data=epg_dn, expand=has_state and (self._get_key(epg_dn) in expanded_nodes))
                         data_to_node_map[epg_dn] = epg_node
                         
                         if epg_dn.endswith('/any'):

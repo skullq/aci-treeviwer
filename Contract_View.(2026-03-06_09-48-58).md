@@ -1,0 +1,200 @@
+# Contract View
+
+- Contract: L3out1 (Tenant: T1, Scope: context, Bi)
+  - Providers (3)
+    - Tenant: T1 -> VRF: V1
+      - EPG: vzAny (V1)
+        - Expanded EPGs in VRF V1:
+          - EPG: epg-T1_V1_E1
+          - EPG: epg-T1_V2_E2
+        - Network: Applies to all EPGs in VRF
+    - Tenant: T1 -> VRF: V2
+      - EPG: L3out2_T1_V2_EPG
+        - Network: 0.0.0.0/0 (Ext EPG Subnet)
+        - Network: 0.0.0.0/0 (Static Route) (Node: 301)
+        - Network: 0.0.0.0/0 (Static Route) (Node: 302)
+      - EPG: vzAny (V2)
+        - Network: Applies to all EPGs in VRF
+  - Consumers (2)
+    - Tenant: T1 -> VRF: V1
+      - EPG: L3out1_T1_V1_EPG
+        - Network: 0.0.0.0/0 (Ext EPG Subnet)
+        - Network: 0.0.0.0/0 (Static Route) (Node: 301)
+        - Network: 0.0.0.0/0 (Static Route) (Node: 302)
+    - Tenant: T1 -> VRF: V2
+      - EPG: L3out2_T1_V2_EPG
+        - Network: 0.0.0.0/0 (Ext EPG Subnet)
+        - Network: 0.0.0.0/0 (Static Route) (Node: 301)
+        - Network: 0.0.0.0/0 (Static Route) (Node: 302)
+- Contract: L3out_SSL (Tenant: T1, Scope: unknown, Bi)
+  - Providers (0)
+    - No Providers Configured
+  - Consumers (2)
+    - Tenant: T1 -> VRF: V1
+      - EPG: vzAny (V1)
+        - Expanded EPGs in VRF V1:
+          - EPG: epg-T1_V1_E1
+          - EPG: epg-T1_V2_E2
+        - Network: Applies to all EPGs in VRF
+    - Tenant: T1 -> VRF: V2
+      - EPG: vzAny (V2)
+        - Network: Applies to all EPGs in VRF
+- Contract: Shared_Contract (Tenant: T1, Scope: tenant, Bi)
+  - Providers (1)
+    - Tenant: T1 -> VRF: Shared_VRF
+      - EPG: L3out_Shared_EPG
+        - Network: 20.1.1.1/32 (Ext EPG Subnet)
+        - Network: 20.1.1.1/32 (Static Route) (Node: 301)
+        - Network: 20.1.1.1/32 (Static Route) (Node: 302)
+  - Consumers (2)
+    - Tenant: T1 -> VRF: V1
+      - EPG: vzAny (V1)
+        - Expanded EPGs in VRF V1:
+          - EPG: epg-T1_V1_E1
+          - EPG: epg-T1_V2_E2
+        - Network: Applies to all EPGs in VRF
+    - Tenant: T1 -> VRF: V2
+      - EPG: vzAny (V2)
+        - Network: Applies to all EPGs in VRF
+- Contract: T1_L4-1_Ser1_PBR_Vzany (Tenant: T1, Scope: context, Bi)
+  - Providers (1)
+    - Tenant: T1 -> VRF: V1
+      - EPG: vzAny (V1)
+        - Expanded EPGs in VRF V1:
+          - EPG: epg-T1_V1_E1
+          - EPG: epg-T1_V2_E2
+        - Network: Applies to all EPGs in VRF
+  - Consumers (1)
+    - Tenant: T1 -> VRF: V1
+      - EPG: L3out1_T1_V1_EPG
+        - Network: 0.0.0.0/0 (Ext EPG Subnet)
+        - Network: 0.0.0.0/0 (Static Route) (Node: 301)
+        - Network: 0.0.0.0/0 (Static Route) (Node: 302)
+- Contract: EPG1_TO_L3out_FW (Tenant: T2, Scope: context, Bi)
+  - Providers (1)
+    - Tenant: T2 -> VRF: T2_V1
+      - EPG: T2_V1_E1
+        - Network: 172.16.3.254/24 (BD: uni/tn-T2/BD-172_16_3_0)
+  - Consumers (1)
+    - Tenant: T2 -> VRF: T2_V1
+      - EPG: L3out_T2_FW_EPG
+        - Network: 0.0.0.0/0 (Ext EPG Subnet)
+        - Network: 0.0.0.0/0 (Static Route) (Node: 301)
+        - Network: 0.0.0.0/0 (Static Route) (Node: 302)
+- Contract: L3out_T2 (Tenant: T2, Scope: tenant, Bi)
+  - Providers (1)
+    - Tenant: T2 -> VRF: Shared_VRF
+      - EPG: L3out_T2_Shared
+        - Network: 10.1.7.0/24 (Ext EPG Subnet)
+        - Network: 172.16.3.0/24 (Ext EPG Subnet)
+        - Network: 10.1.7.0/24 (Static Route) (Node: 301)
+        - Network: 10.1.7.0/24 (Static Route) (Node: 302)
+        - Network: 172.16.3.0/24 (Static Route) (Node: 301)
+        - Network: 172.16.3.0/24 (Static Route) (Node: 302)
+  - Consumers (1)
+    - Tenant: T2 -> VRF: Shared_VRF
+      - EPG: L3out_T2_EPG
+        - Network: 0.0.0.0/0 (Ext EPG Subnet)
+        - Network: 10.1.3.0/24 (Ext EPG Subnet)
+        - Network: 0.0.0.0/0 (Static Route) (Node: 301)
+        - Network: 0.0.0.0/0 (Static Route) (Node: 302)
+- Contract: L3out_T3 (Tenant: T3, Scope: context, Bi)
+  - Providers (1)
+    - Tenant: T3 -> VRF: T3_FW
+      - EPG: T3_V1_E1
+        - Network: 172.16.4.254/24 (BD: uni/tn-T3/BD-172_16_4_0)
+  - Consumers (1)
+    - Tenant: T3 -> VRF: T3_FW
+      - EPG: L3out_T3_FW_EPG
+        - Network: 0.0.0.0/0 (Ext EPG Subnet)
+        - Network: 0.0.0.0/0 (Static Route) (Node: 301)
+        - Network: 0.0.0.0/0 (Static Route) (Node: 302)
+- Contract: Shared_Mang (Tenant: T3, Scope: tenant, Bi)
+  - Providers (1)
+    - Tenant: T3 -> VRF: Shared_VRF
+      - EPG: L3out_T3_Shared_EPG
+        - Network: 172.16.4.0/24 (Ext EPG Subnet)
+        - Network: 10.1.6.0/24 (Static Route) (Node: 301)
+        - Network: 10.1.6.0/24 (Static Route) (Node: 302)
+        - Network: 172.16.4.0/24 (Static Route) (Node: 301)
+        - Network: 172.16.4.0/24 (Static Route) (Node: 302)
+  - Consumers (1)
+    - Tenant: T3 -> VRF: Shared_VRF
+      - EPG: L3out_T3_Mang_EPG
+        - Network: 0.0.0.0/0 (Ext EPG Subnet)
+        - Network: 10.1.4.0/24 (Ext EPG Subnet)
+        - Network: 192.168.0.0/24 (Ext EPG Subnet)
+        - Network: 0.0.0.0/0 (Static Route) (Node: 301)
+        - Network: 0.0.0.0/0 (Static Route) (Node: 302)
+        - Network: 10.1.4.0/24 (Static Route) (Node: 301)
+        - Network: 10.1.4.0/24 (Static Route) (Node: 302)
+        - Network: 192.168.0.0/24 (Static Route) (Node: 301)
+        - Network: 192.168.0.0/24 (Static Route) (Node: 302)
+- Contract: Common_Mang (Tenant: common, Scope: global, Bi)
+  - Providers (1)
+    - Tenant: common -> VRF: V1
+      - EPG: L3out_Common
+        - Network: 20.1.1.1/32 (Ext EPG Subnet)
+        - Network: 20.1.1.1/32 (Static Route) (Node: 301)
+        - Network: 20.1.1.1/32 (Static Route) (Node: 302)
+  - Consumers (2)
+    - Tenant: T2 -> VRF: T2_V1
+      - EPG: T2_V1_E1
+        - Network: 172.16.3.254/24 (BD: uni/tn-T2/BD-172_16_3_0)
+    - Tenant: T3 -> VRF: T3_FW
+      - EPG: T3_V1_E1
+        - Network: 172.16.4.254/24 (BD: uni/tn-T3/BD-172_16_4_0)
+- Contract: Common_WEB_TO_Mang (Tenant: common, Scope: global, Bi)
+  - Providers (1)
+    - Tenant: common -> VRF: V1
+      - EPG: L3out_Common
+        - Network: 20.1.1.1/32 (Ext EPG Subnet)
+        - Network: 20.1.1.1/32 (Static Route) (Node: 301)
+        - Network: 20.1.1.1/32 (Static Route) (Node: 302)
+  - Consumers (1)
+    - Tenant: T3 -> VRF: Shared_VRF
+      - EPG: L3out_T3_Mang_EPG
+        - Network: 0.0.0.0/0 (Ext EPG Subnet)
+        - Network: 10.1.4.0/24 (Ext EPG Subnet)
+        - Network: 192.168.0.0/24 (Ext EPG Subnet)
+        - Network: 0.0.0.0/0 (Static Route) (Node: 301)
+        - Network: 0.0.0.0/0 (Static Route) (Node: 302)
+        - Network: 10.1.4.0/24 (Static Route) (Node: 301)
+        - Network: 10.1.4.0/24 (Static Route) (Node: 302)
+        - Network: 192.168.0.0/24 (Static Route) (Node: 301)
+        - Network: 192.168.0.0/24 (Static Route) (Node: 302)
+- Contract: WEB_TO_DUR_WAS (Tenant: common, Scope: global, Bi)
+  - Providers (1)
+    - Tenant: T2 -> VRF: Shared_VRF
+      - EPG: L3out_T2_Shared
+        - Network: 10.1.7.0/24 (Ext EPG Subnet)
+        - Network: 172.16.3.0/24 (Ext EPG Subnet)
+        - Network: 10.1.7.0/24 (Static Route) (Node: 301)
+        - Network: 10.1.7.0/24 (Static Route) (Node: 302)
+        - Network: 172.16.3.0/24 (Static Route) (Node: 301)
+        - Network: 172.16.3.0/24 (Static Route) (Node: 302)
+  - Consumers (1)
+    - Tenant: T3 -> VRF: Shared_VRF
+      - EPG: L3out_T3_Mang_EPG
+        - Network: 0.0.0.0/0 (Ext EPG Subnet)
+        - Network: 10.1.4.0/24 (Ext EPG Subnet)
+        - Network: 192.168.0.0/24 (Ext EPG Subnet)
+        - Network: 0.0.0.0/0 (Static Route) (Node: 301)
+        - Network: 0.0.0.0/0 (Static Route) (Node: 302)
+        - Network: 10.1.4.0/24 (Static Route) (Node: 301)
+        - Network: 10.1.4.0/24 (Static Route) (Node: 302)
+        - Network: 192.168.0.0/24 (Static Route) (Node: 301)
+        - Network: 192.168.0.0/24 (Static Route) (Node: 302)
+- Contract: ALL_common (Tenant: mgmt, Scope: global, Bi)
+  - Providers (2)
+    - Tenant: mgmt -> VRF: inb
+      - EPG: L3_EPG_INB
+        - Network: 0.0.0.0/0 (Ext EPG Subnet)
+        - Network: 0.0.0.0/0 (Static Route) (Node: 301)
+      - EPG: ND_TEST_EPG
+        - Network: 192.168.100.254/24 (BD: uni/tn-mgmt/BD-inb)
+  - Consumers (1)
+    - Tenant: mgmt -> VRF: inb
+      - EPG: L3_EPG_INB
+        - Network: 0.0.0.0/0 (Ext EPG Subnet)
+        - Network: 0.0.0.0/0 (Static Route) (Node: 301)

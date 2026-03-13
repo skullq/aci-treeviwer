@@ -1,0 +1,140 @@
+# Node Port View
+
+- Node: 1 (APIC1)
+  - Port: eth2/1
+    - Neighbor: Leaf_101 (Remote: topology/pod-1/paths-101/pathep-)
+- Node: 101 (Leaf_101)
+  - Port: eth1/1
+    - Neighbor: APIC1 (Remote: eth2-1)
+  - Port: eth1/5
+    - VLAN: 30
+      - EPG: T2/AP_T2/T2_V1_E1
+    - VLAN: 40
+      - EPG: T3/AP_T3/T3_V1_E1
+  - Port: eth1/11
+    - VLAN: 10
+      - EPG: T1/AP_T1/T1_V1_E1
+    - VLAN: 20
+      - EPG: T1/AP_T1/T1_V2_E2
+  - Port: eth1/49
+    - Neighbor: Spine_201 (Remote: topology/pod-1/paths-201/pathep-)
+  - Port: eth1/50
+    - Neighbor: Spine_202 (Remote: topology/pod-1/paths-202/pathep-)
+- Node: 102 (Leaf_102)
+  - Port: eth1/11
+    - VLAN: 10
+      - EPG: T1/AP_T1/T1_V1_E1
+    - VLAN: 20
+      - EPG: T1/AP_T1/T1_V2_E2
+  - Port: eth1/49
+    - Neighbor: Spine_201 (Remote: topology/pod-1/paths-201/pathep-)
+  - Port: eth1/50
+    - Neighbor: Spine_202 (Remote: topology/pod-1/paths-202/pathep-)
+- Node: 103 (Leaf_103)
+  - Port: eth1/5
+    - Neighbor: nd1 (Remote: fabric0)
+    - VLAN: 10
+      - EPG: T1/AP_T1/T1_V1_E1
+    - VLAN: 17
+      - EPG: mgmt/ND_TEST_AP/ND_TEST_EPG
+    - VLAN: 20
+      - EPG: T1/AP_T1/T1_V2_E2
+    - VLAN: 30
+      - EPG: T2/AP_T2/T2_V1_E1
+    - VLAN: 40
+      - EPG: T3/AP_T3/T3_V1_E1
+  - Port: eth1/49
+    - Neighbor: Spine_201 (Remote: topology/pod-1/paths-201/pathep-)
+  - Port: eth1/50
+    - Neighbor: Spine_202 (Remote: topology/pod-1/paths-202/pathep-)
+- Node: 201 (Spine_201)
+  - Port: eth1/1
+    - Neighbor: Leaf_101 (Remote: topology/pod-1/paths-101/pathep-)
+  - Port: eth1/2
+    - Neighbor: Leaf_102 (Remote: topology/pod-1/paths-102/pathep-)
+  - Port: eth1/3
+    - Neighbor: Leaf_103 (Remote: topology/pod-1/paths-103/pathep-)
+  - Port: eth1/4
+    - Neighbor: B_Leaf_301 (Remote: topology/pod-1/paths-301/pathep-)
+  - Port: eth1/5
+    - Neighbor: B_Leaf_302 (Remote: topology/pod-1/paths-302/pathep-)
+- Node: 202 (Spine_202)
+  - Port: eth1/1
+    - Neighbor: Leaf_101 (Remote: topology/pod-1/paths-101/pathep-)
+  - Port: eth1/2
+    - Neighbor: Leaf_102 (Remote: topology/pod-1/paths-102/pathep-)
+  - Port: eth1/3
+    - Neighbor: Leaf_103 (Remote: topology/pod-1/paths-103/pathep-)
+  - Port: eth1/4
+    - Neighbor: B_Leaf_301 (Remote: topology/pod-1/paths-301/pathep-)
+  - Port: eth1/5
+    - Neighbor: B_Leaf_302 (Remote: topology/pod-1/paths-302/pathep-)
+- vPC Pair: Node 301 (B_Leaf_301) - Node 302 (B_Leaf_302)
+  - [Node 301] Port: eth1/1
+    - Service Device: T1_L4-1
+  - [Node 302] Port: eth1/1
+    - Service Device: T1_L4-1
+  - [Node 301] Port: eth1/6
+    - VLAN: 111
+      - L3Out: L3out_Shared
+    - VLAN: 112
+      - L3Out: L3out_Common
+  - [Node 302] Port: eth1/6
+    - VLAN: 111
+      - L3Out: L3out_Shared
+    - VLAN: 112
+      - L3Out: L3out_Common
+  - [Node 301] Port: eth1/7
+    - Neighbor: L3_1.l31.local (Remote: GigabitEthernet1/1/1)
+    - VLAN: 101
+      - L3Out: L3out1_T1_V1
+    - VLAN: 102
+      - L3Out: L3out2_T1_V2
+    - VLAN: 103
+      - L3Out: L3out_T2
+    - VLAN: 104
+      - L3Out: L3out_T3_Mang
+    - VLAN: 27
+      - L3Out: L3_INB
+  - [Node 302] Port: eth1/7
+    - Neighbor: L3_2.L32.local (Remote: GigabitEthernet1/1/1)
+    - VLAN: 101
+      - L3Out: L3out1_T1_V1
+    - VLAN: 102
+      - L3Out: L3out2_T1_V2
+    - VLAN: 103
+      - L3Out: L3out_T2
+    - VLAN: 104
+      - L3Out: L3out_T3_Mang
+  - [Node 301] Port: eth1/9
+    - Neighbor: L3_1.l31.local (Remote: GigabitEthernet1/0/9)
+    - VLAN: 50
+      - L3Out: L3out_T3_Shared
+    - VLAN: 70
+      - L3Out: L3out_T2_Shared
+  - [Node 302] Port: eth1/9
+    - Neighbor: L3_2.L32.local (Remote: GigabitEthernet1/0/9)
+    - VLAN: 50
+      - L3Out: L3out_T3_Shared
+    - VLAN: 70
+      - L3Out: L3out_T2_Shared
+  - [Node 301] Port: eth1/10
+    - Neighbor: L3_1.l31.local (Remote: GigabitEthernet1/0/10)
+    - VLAN: 60
+      - L3Out: L3out_T3_FW
+    - VLAN: 80
+      - L3Out: L3out_T2_FW
+  - [Node 302] Port: eth1/10
+    - Neighbor: L3_2.L32.local (Remote: GigabitEthernet1/0/10)
+    - VLAN: 60
+      - L3Out: L3out_T3_FW
+    - VLAN: 80
+      - L3Out: L3out_T2_FW
+  - [Node 301] Port: eth1/49
+    - Neighbor: Spine_201 (Remote: topology/pod-1/paths-201/pathep-)
+  - [Node 302] Port: eth1/49
+    - Neighbor: Spine_201 (Remote: topology/pod-1/paths-201/pathep-)
+  - [Node 301] Port: eth1/50
+    - Neighbor: Spine_202 (Remote: topology/pod-1/paths-202/pathep-)
+  - [Node 302] Port: eth1/50
+    - Neighbor: Spine_202 (Remote: topology/pod-1/paths-202/pathep-)
